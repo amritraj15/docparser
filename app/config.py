@@ -1,0 +1,40 @@
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    # Storage
+    database_url: str = "sqlite:///./docparser.db"
+    upload_dir: str = "./uploads"
+
+    # LLM
+    llm_provider: str = "anthropic"  # "anthropic" | "ollama"
+    anthropic_api_key: str = ""
+    extraction_model: str = "claude-sonnet-4-6"
+
+    # Local (Ollama) extraction — used when llm_provider == "ollama"
+    ollama_host: str = "http://localhost:11434"
+    ollama_model: str = "llama3.2-vision"
+    ollama_max_pages: int = 5  # cap pages rendered to images per document, to bound context/latency
+    ollama_timeout_seconds: float = 120.0
+
+    # Pipeline behavior
+    review_confidence_threshold: float = 0.75  # fields below this go to the review queue
+    max_upload_bytes: int = 20 * 1024 * 1024  # 20MB, matches Claude's PDF size ceiling
+
+    # Repo change-suggestion (RAG over a local codebase) — OFF by default on purpose.
+    # This points at a LOCAL FOLDER PATH, never a URL and never uploaded anywhere. Embedding
+    # is hard-locked to a local Ollama model in code (see repo_index.py) regardless of
+    # LLM_PROVIDER, because sending proprietary code to a cloud API to embed it is a real
+    # confidentiality leak even when cloud Claude is fine for reading a public BSE circular.
+    repo_suggestion_enabled: bool = False
+    backend_repo_path: str = ""
+    frontend_repo_path: str = ""
+    repo_index_dir: str = "./repo_index"  # local cache of embeddings — gitignored, never committed
+    repo_embedding_model: str = "nomic-embed-text"  # local Ollama embedding model
+    repo_similarity_threshold: float = 0.35  # below this, we report "no match" rather than force a guess
+
+    class Config:
+        env_file = ".env"
+
+
+settings = Settings()

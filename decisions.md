@@ -1,0 +1,416 @@
+# decisions.md
+
+A running log of the real calls made while building this, not a changelog.
+
+---
+
+## 1. Problem scope: invoices/receipts, not "any document"
+
+**Decision:** Wire the extraction schema end-to-end for one document type (invoice-shaped:
+vendor, invoice number, dates, total, line items) rather than building a generic
+"extract anything" system.
+
+**Alternatives considered:** A fully generic extractor where the user defines an arbitrary
+schema per upload, or a multi-document-type classifier with a schema per type.
+
+**Reasoning:** The hard, interesting part of this assignment is handling extraction
+*uncertainty* gracefully — confidence scoring, partial failure, human review — not building
+a schema-definition UI. Going deep on one document type and getting the uncertainty handling
+right beats going wide on schema flexibility and getting everything shallow. The data model
+(`ExtractedField` as name/value/confidence rows, not fixed columns) is schema-agnostic on
+purpose, so adding a second document type later is a prompt/schema change, not a migration.
+
+**What was cut:** Per-user custom schemas. The `record_invoice_extraction` tool schema is
+the one shape currently wired up; the model is instructed to set `doc_type` and leave
+inapplicable fields low-confidence/null if it's shown something else, so it degrades instead
+of crashing on an off-type document, but it won't invent a *new* structured schema for it.
+
+---
+
+## 2. Extraction engine: Claude's native PDF understanding, not a custom OCR pipeline
+
+**Decision:** Send the PDF directly to Claude as a base64 `document` content block and let
+the model read layout, tables, and scanned text natively, instead of running Tesseract/OCR
+and a separate layout parser ourselves.
+
+**Alternatives considered:** Tesseract OCR + a hand-built layout parser (regex/positional
+heuristics) + a separate LLM call over the extracted text; or a hybrid where OCR runs first
+and only kicks in for scanned docs.
+
+**Reasoning:** A hand-rolled OCR+layout pipeline is exactly the kind of thing that's
+"good enough for demo PDFs" and falls over on the real-world mess (multi-column layouts,
+tables spanning pages, rotated scans) — which is the part of this assignment explicitly
+called out as the bar to clear. Claude's PDF understanding already handles that generalization
+better than anything buildable from scratch in 5 days, and it collapses "OCR quality" and
+"field extraction accuracy" into a single quality lever instead of two independently-failing
+stages I'd have to debug separately.
+
+**Tradeoff accepted:** This makes the system dependent on a single LLM vendor's PDF handling
+and its per-request cost/latency, and there's no deterministic fallback if the API is down.
+Mitigated by making failures per-document and retryable (`/documents/{id}/reprocess`) rather
+than crashing a batch, but a production version would want a second-vendor or local-OCR
+fallback path — flagged as a "beyond scope" item, not something silently ignored.
+
+---
+
+## 3. Structured output via forced tool-use, not "reply with JSON"
+
+**Decision:** Force the model to call a single tool (`tool_choice: {"type": "tool", ...}`)
+whose `input_schema` defines the extraction contract, rather than prompting "respond only
+with JSON" and parsing the text response.
+
+**Alternatives considered:** Prompt-based JSON with a regex/markdown-fence strip before
+`json.loads`; a two-step "extract then validate" call.
+
+**Reasoning:** Prompt-based JSON is the single most common source of silent extraction
+failures — a stray sentence before the JSON, a trailing comma, a markdown fence the model
+forgot to close. Tool-use input is schema-validated on Anthropic's side before it ever
+reaches this codebase, which removes an entire failure class for free. It also makes the
+"every field needs a confidence score" requirement structural (part of the schema) instead
+of a prompt instruction the model can quietly ignore under pressure.
+
+**What was cut:** A self-critique / second-pass verification call (extract, then ask the
+model to check its own extraction against the source again). Would likely raise accuracy
+further but doubles latency and cost per document; the confidence score + human review queue
+does similar work for a fraction of the cost.
+
+---
+
+## 4. Per-field confidence + review queue, not per-document accept/reject
+
+**Decision:** Every extracted field carries its own confidence score and source note. Fields
+below the threshold go to a review queue as individual items, not as "this whole document
+needs review."
+
+**Alternatives considered:** A single document-level confidence score with an all-or-nothing
+"accept/reprocess" gate; no review mechanism at all (trust the model).
+
+**Reasoning:** This is the actual hard sub-problem of the assignment. A document is rarely
+uniformly bad — it's usually one smudged number on an otherwise-clean invoice. Gating the
+whole document on its worst field wastes a human's time re-verifying nine fields that were
+already right. Per-field review means a reviewer's queue is exactly the set of things
+actually in doubt.
+
+**What was cut:** Confidence calibration/tuning against a labeled dataset. The threshold
+(0.75) is a reasonable prior, not empirically tuned — there was no labeled corpus to tune
+against in 5 days. Flagged as the first thing to do with real usage data.
+
+---
+
+## 5. Data model: EAV-style `ExtractedField` table, not one column per field
+
+**Decision:** Store extracted fields as rows (`document_id`, `field_name`, `field_value`,
+`confidence`, `source_note`) rather than a rigid `invoices` table with a fixed column per
+field.
+
+**Alternatives considered:** A proper relational `invoices` table with typed columns and a
+separate `line_items` table with foreign keys; Postgres JSONB blob per document with no
+per-field structure at all.
+
+**Reasoning:** A fixed-column table is the "right" answer for one document type at fixed
+scale, but it means a schema migration every time a new document type or field gets added —
+which is likely the first real request after this ships. EAV rows keep line items and
+scalar fields, across any future document type, in one queryable shape without migrations.
+A pure JSONB blob was rejected because it loses the ability to query/filter/index individual
+fields, and loses the per-field confidence/source_note structure that's the actual point of
+this project.
+
+**Tradeoff accepted:** EAV is worse for complex SQL joins and loses DB-level type safety
+(everything's stored as text, cast in Python) — acceptable at this scale, a real constraint
+if this had to serve high query volume. See decision 7.
+
+---
+
+## 6. Background processing: FastAPI `BackgroundTasks`, not Celery/RQ
+
+**Decision:** Run extraction as a FastAPI `BackgroundTasks` job triggered on upload, with its
+own isolated DB session, instead of standing up a real task queue.
+
+**Alternatives considered:** Celery + Redis/RabbitMQ; RQ; a simple polling worker process.
+
+**Reasoning:** A real queue is the correct answer past a single instance (retries, backoff,
+concurrency control, worker scaling) — but standing up Redis/broker infra for a 5-day, single-
+instance demo is infrastructure the grading rubric isn't asking for and that would eat build
+time better spent on the extraction/review logic itself. `BackgroundTasks` gets the same
+user-facing behavior (upload returns immediately, processing happens async) without it.
+
+**What was cut:** Retries with backoff on transient API failures — currently a failure just
+marks the document `failed` and a human (or a script) calls `/reprocess`. No automatic retry.
+This is the most likely thing to build next in a real deployment, and the isolated-session
+background task design was chosen specifically so it's a small change (swap the task
+dispatch, not the pipeline logic) to move to a real queue later.
+
+---
+
+## 7. Query layer: Python-side filtering, not SQL-side casts, not vector search
+
+**Decision:** `/query/documents` loads a document's fields and filters in Python (string
+match, float cast with try/except, date-string comparison) rather than writing `CAST`/`ILIKE`
+SQL against the EAV table, and does not do embedding-based semantic search.
+
+**Alternatives considered:** SQL-side filtering with `CAST(field_value AS FLOAT)` per query;
+adding an embeddings column + vector search (pgvector) for freeform natural-language queries
+over the document corpus.
+
+**Reasoning:** SQL casts over a text column work but are fragile across SQLite/Postgres and
+add real complexity for a scale (a demo's worth of documents) where Python-side filtering
+performs identically. Vector search is a genuinely good idea for "find documents about X"
+freeform queries and was scoped out for time — it's called out explicitly in the README as
+the first real feature to add, not silently dropped.
+
+**What was cut:** Real semantic search; SQL-side indexed filtering. Both are the correct
+move at production scale — noted as the concrete next step (promote `vendor_name`,
+`total_amount`, `invoice_date` to indexed columns on `Document` once query volume matters,
+since those are the fields actually being filtered on).
+
+---
+
+## 8. Dates assumed normalized to ISO-8601 by the model
+
+**Decision:** Date range filtering (`date_from`/`date_to`) does lexical string comparison,
+which only works correctly if `invoice_date` is in `YYYY-MM-DD` format. The extraction prompt
+relies on the model's general instruction-following to produce that format rather than a
+deterministic post-extraction normalization/validation step.
+
+**Reasoning:** Claude reliably normalizes dates to ISO format when structured output is
+requested in practice, and building a full date-parsing/normalization library (handling
+`03/04/2026` ambiguity, non-US formats, "the 3rd of April" freeform text, etc.) is a
+sub-project of its own.
+
+**What was cut:** A deterministic date-normalization/validation pass after extraction. This
+is a known sharp edge — flagged rather than hidden — and would be the second thing to harden
+after retries, since silently-wrong date filtering is a worse failure mode than a document
+that's merely stuck in the review queue.
+
+---
+
+## 9. Ollama support: optional local provider, not a replacement for Claude
+
+**Decision:** Add a second extraction provider (`LLM_PROVIDER=ollama`) that routes through a
+local Ollama vision model instead of Claude, selected by config rather than by a code change.
+Claude remains the default.
+
+**Alternatives considered:** Local-only (drop the cloud dependency entirely); a fully
+pluggable provider abstraction with a registry/interface class for N providers.
+
+**Reasoning:** The two providers need different inputs — Claude reads PDFs natively; local
+vision models generally don't, so the Ollama path renders pages to images with PyMuPDF first.
+Rather than build a speculative plugin interface for providers that don't exist yet, both
+providers just produce the same plain dict payload shape (the same JSON schema is reused for
+Claude's tool call and Ollama's `format` parameter) and share one `_normalize()` function.
+That's the minimum abstraction that actually pays for itself right now.
+
+**Tradeoff accepted:** Local vision models are noticeably weaker than Claude at dense
+text/table extraction in practice, so running with Ollama means more fields land in the
+review queue, not fewer — this is stated plainly in the README rather than papered over.
+Multi-page documents also cost more locally: every page becomes a separate image sent to
+the model, capped at `OLLAMA_MAX_PAGES` (default 5) specifically to keep context and latency
+bounded, at the cost of silently ignoring pages beyond that cap.
+
+**What was cut:** Automatic provider fallback (try Ollama, fall back to Claude on failure,
+or vice versa). Each request commits to one provider for the whole run; switching is a config
+change, not a runtime decision. A production system serving both privacy-sensitive and
+accuracy-sensitive workloads would want per-request provider selection — noted as a natural
+next step, not built here for time.
+
+---
+
+## 10. Pivot: generic invoice extraction → BSE circular classification for a mutual-fund platform
+
+**Decision:** Replace the initial invoice/receipt extraction schema with a classification
+schema purpose-built for BSE notices/circulars, aimed at a backend engineer at a mutual-fund
+transacting platform (Kuvera, integrated with BSE StAR MF) who needs to know, per circular:
+does it require a system change, is that change backend/frontend/both, and which market
+segment does it apply to.
+
+**Alternatives considered:** Keep the invoice schema as the flagship demo and treat circulars
+as "just another document type" bolted on alongside it; build both schemas end-to-end to show
+range.
+
+**Reasoning:** The invoice extraction demo answered "can this system pull structured fields
+out of a PDF" but never answered "for whom, and why does it matter." The circular use case is
+a real problem from actual work, with a named person and a real cost to getting it wrong (a
+missed system-impacting circular vs. a false positive that wastes an afternoon of
+investigation). Rebuilding around it is a stronger answer to the assignment's product-thinking
+and UX criteria than keeping a more generic but less-motivated demo. Building both schemas
+was rejected — depth on one real use case beats breadth across two demo ones, consistent
+with decision #1's original reasoning, just re-applied to a better-chosen target.
+
+**What transferred unchanged:** The whole pipeline skeleton — upload → LLM classification with
+per-field confidence → review queue for low-confidence fields → query. The EAV-style
+`ExtractedField` table (decision #5) needed zero schema changes; only the extraction prompt,
+tool schema, and the `_normalize()` field list changed. That's the payoff of that earlier
+decision showing up in practice, not just in theory.
+
+**What's explicitly NOT built (the real hard part, deliberately deferred):** The "suggested
+place of change" — pointing a system-impacting circular at the actual file/module in
+Kuvera's backend or frontend repo that likely needs updating — is not implemented. That
+requires embedding a real codebase and doing semantic retrieval against the circular's
+content, which is a legitimately new subsystem (and the first place actual RAG belongs in
+this project — everything built so far is classification/extraction, not retrieval-augmented
+generation). It's also not something a general take-home can wire to a real private company
+repo. Scoped out as the clearly-labeled stretch goal, not silently dropped: the MVP stops at
+classification (impacting/not, segment, backend/frontend/both) with confidence-gated human
+review, which is a complete, defensible product on its own.
+
+**Other things cut for the same reason:** Automated ingestion from BSE's own site — the
+upload endpoint takes a manually-downloaded circular PDF, same as any other document, rather
+than a scraper. BSE's site sits behind bot detection that a bare HTTP client won't clear, and
+solving that (session-warmed headless browser, rate limiting) is an ingestion-automation
+problem separable from the classification logic the assignment is actually evaluating.
+Confidence-threshold calibration is unvalidated for this domain too — there's no labeled
+corpus of "circulars that historically did/didn't require a system change" to tune the 0.75
+threshold against, which is a real gap worth being upfront about rather than implying the
+threshold is more rigorous than it is.
+
+---
+
+## 11. Repo change-suggestion: real RAG, scoped around a hard problem instead of a demo
+
+**Decision:** Build a retrieval layer that suggests which files in a local codebase likely
+need to change for a system-impacting circular — but scope the actual engineering effort
+around the part that's genuinely hard (bridging regulatory language and code vocabulary,
+and being honest when nothing matches) rather than around infrastructure (a vector DB, a
+chunking framework) that would look more impressive in a demo and matter less in practice.
+
+**The hard sub-problem, and why the obvious version fails:** A circular says "a new
+mandatory field 'scheme_code_v2' shall be included in the order upload file format." Nothing
+in that sentence looks like source code. Plain embedding similarity between regulatory prose
+and code is not a well-aligned space — BSE says "UCC," codebases say `client_id`; BSE
+describes a *file format change*, which usually lives in a schema/constants file, not the
+business-logic function a naive "most similar text" search would surface first. The version
+everyone would build — embed every file, cosine-similarity against the circular's text,
+return the top match — produces a demo that works on one cherry-picked example and is
+actively misleading the rest of the time, which is worse than not building it: a confidently
+wrong suggestion sends an engineer down a dead end, whereas no suggestion just means they do
+what they do today.
+
+**What was actually built to address that, instead of just infra:**
+- A small, explicit BSE-term-to-codebase-vocabulary glossary (`BSE_TERM_GLOSSARY` in
+  `repo_index.py`) that expands the query before embedding — a heuristic patch for
+  vocabulary drift, not a solved problem, but a real attempt at the actual gap rather than
+  pretending raw similarity search bridges it.
+- Filename/path heuristics (`FILE_TAG_HINTS`) that tag chunks as schema/constants/
+  validation/api/model, biasing retrieval toward the kind of file a "new field in a file
+  format" circular actually maps to, without needing a full per-language AST parser.
+- **An explicit no-match branch.** Below `REPO_SIMILARITY_THRESHOLD`, the system reports
+  "likely new functionality — no existing code found" instead of force-ranking a top-3 list.
+  This is the same confidence-gating philosophy as the extraction pipeline's review queue,
+  applied to retrieval instead of extraction — a low-confidence "I'm not sure" is more
+  useful downstream than a confident wrong answer.
+
+**Alternatives considered:** A real vector database (pgvector/Chroma/FAISS) instead of a
+flat local JSON index with in-process cosine similarity; per-language AST-based chunking
+(tree-sitter) instead of fixed-line-window chunking; a second LLM call to synthesize a
+plain-English rationale per candidate instead of returning raw ranked snippets.
+
+**Reasoning:** All three alternatives are real upgrades at real scale, and all three were
+rejected for the same reason: at the data volume a local codebase index actually has, they
+add engineering surface area without changing whether the system gives useful answers. A
+flat JSON index with brute-force cosine similarity is transparent, debuggable, and fast
+enough for a codebase's worth of chunks — the same "don't add infra the scale doesn't need"
+call made in decision 7 for query filtering, applied here again. A rationale-synthesis LLM
+call was cut specifically because it would mean sending code snippets to an LLM a second
+time for a service that's supposed to guarantee code never leaves the machine — adding it
+back only with a hard-locked local model, if at all, is the right sequencing, not a default.
+
+**The confidentiality constraint, and why it shaped the architecture, not just the docs:**
+The codebase this is meant to run against (Kuvera's actual backend/frontend) is private and
+can't be uploaded anywhere — not to this repo, not to a public stand-in, not to a cloud
+embeddings API. So the design point is a **local folder path**, configured via
+`BACKEND_REPO_PATH`/`FRONTEND_REPO_PATH`, indexed and embedded entirely on the machine
+running the app. This is enforced in code, not just convention: `_embed_texts()` in
+`repo_index.py` only ever calls a local Ollama endpoint — there is no
+`embedding_provider` setting, and `LLM_PROVIDER=anthropic` (used for circular
+classification, which is fine to send to Claude since a BSE circular is a public document)
+has zero effect on this path. The index cache (`repo_index/`) is gitignored, and the whole
+feature is `REPO_SUGGESTION_ENABLED=false` by default so a deployed grading instance can
+never accidentally index and expose anything, even if someone pointed the env vars at a
+real path by mistake.
+
+**Tested against:** Since neither a public stand-in repo nor the real private repo could go
+in this submission, the test suite (`tests/test_repo_index.py`, `tests/test_repo_suggestions.py`)
+exercises the indexer against small synthetic local directories created per-test, with a
+deterministic fake embedding function standing in for the real Ollama call — the same
+pattern already used for testing the classification LLM calls. This found a real bug during
+development: when `REPO_INDEX_DIR` lives inside the repo root being indexed (exactly the
+setup for testing this against docparser's own directory), the indexer was re-indexing its
+own previous JSON output as source on every rebuild, reporting a spurious change every run.
+Fixed by excluding the resolved index-cache path from the file walk — kept in
+`decisions.md` because it's a good example of a real-world edge case that a synthetic,
+too-clean test fixture almost hid: the bug only appeared once the index directory and the
+repo root overlapped, which is the realistic case, not the convenient one.
+
+**What's still cut, honestly:** No AST-based chunking (fixed-line windows lose some
+structure a real parser wouldn't). No incremental file-watcher (re-index is a manual
+`POST /repo-index/build`, not automatic on repo changes). No handling for a circular that
+maps to genuinely distinct concerns across multiple unrelated files within the same
+repo — results are ranked and deduplicated by file, but there's no explicit "these are two
+separate issues" grouping. Each is a reasonable next step, not an oversight papered over.
+
+---
+
+## 12. Ran a structured multi-persona review against the actual implementation
+
+**Decision:** Install the `plan-workflow`/`plan-review`/`ai-build` skills into this repo and
+immediately apply `plan-review`'s nine-persona methodology retroactively against the actual
+code and this decisions log, rather than only against a future plan. Full findings:
+`.agents/docs/plans/bse-circular-classifier/00-review-20260727.md`.
+
+**Reasoning:** The skill's own instructions assume a Phase 1/2 plan exists to review. This
+project has neither — it used this decisions log instead, per the assignment's own required
+artifact. Rather than skip the review because the input format doesn't match, the review
+was pointed at the code + `decisions.md` directly, with that mismatch stated as the first
+finding rather than silently worked around.
+
+**What it found, concretely (not hypothetically):** Two real bugs, both fixed same-session:
+1. `_normalize()` assumed every extracted field arrives as a `{value, confidence,
+   source_note}` object. A model returning a bare string for a field (valid JSON, wrong
+   shape) raised an unhandled exception that `pipeline.process_document`'s
+   `except ExtractionError` didn't catch — leaving the document stuck in `PROCESSING`
+   forever instead of landing in `FAILED` (visible, retryable). Fixed by wrapping
+   normalization and re-raising as `ExtractionError`.
+2. Correcting a review item overwrote `ExtractedField.field_value` directly, destroying the
+   model's original prediction. That predicted-vs-corrected pair is exactly the labeled data
+   this project would need to ever validate or retune the confidence thresholds decisions #4
+   and #10 already admit are unvalidated priors. Fixed by adding `ReviewItem.original_value`,
+   captured at creation and preserved through correction.
+
+**Also surfaced, not yet fixed:** no auth/authz on any endpoint, no deployed URL yet, repo
+not yet pushed to GitHub — see the review file for full severity classification and
+reasoning on each.
+
+**What was cut:** Full templates (`AGENTS.md`, `01-overview.md`, `02-engineering-doc.md`,
+`03-todo.md`, `review.md`) referenced by the installed skills weren't provided in the
+uploaded files and weren't reconstructed — the skills are installed and usable for their
+core methodology (triage rules, review personas, severity classification) but a future
+`plan-workflow` run in this repo will need those templates authored first.
+
+---
+
+## 13. No auth for the demo submission — accepted, not fixed
+
+**Decision:** Leave every endpoint unauthenticated for this submission, reclassifying the
+CIO/CTO "no AuthN/AuthZ" finding from `00-review-20260727.md` as an accepted risk rather
+than a blocker to resolve before submitting.
+
+**Alternatives considered:** Add a minimal API-key gate before deploying (was the review's
+original recommendation); ship with the explicit README caveat instead (chosen).
+
+**Reasoning:** This is a graded take-home demo, not a production deployment carrying real
+regulatory data — reviewed by a small, known set of people, time-boxed, and disposable
+after grading. Precedent: public take-home/demo submissions in this space commonly ship
+without auth for the same reason (e.g. https://github.com/interviewstreet/hiring-agent).
+Building real auth would spend build-time on a concern that doesn't change whether the
+core submission — classification quality, review-queue design, the RAG retrieval piece —
+is any good, which is what's actually being evaluated.
+
+**What makes this different from silently ignoring the finding:** the risk is still true
+and still stated plainly — the README's security-note section stays, unmodified, so anyone
+who deploys this beyond the grading window knows exactly what they're accepting. The
+severity in `00-review-20260727.md` is updated to reflect this decision, not deleted.
+
+**What was cut:** Any auth implementation for this submission. If this project continues
+past grading — e.g. actually piloted internally at Kuvera — this reclassifies back to a
+blocker immediately; the precedent above justifies a graded demo, not a real deployment
+touching real circulars or a real private codebase.
