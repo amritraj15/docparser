@@ -446,3 +446,37 @@ free, but it itself expires after a period of inactivity, trading one persistenc
 for a shorter-lived one) — SQLite-on-ephemeral-disk was judged good enough for a grading
 window, with the swap documented as a one-line `DATABASE_URL` change if persistence turns
 out to matter.
+
+---
+
+## 15. Deploy failure: pin Python version, don't chase the dependency
+
+**Decision:** Add `.python-version` (and `PYTHON_VERSION` in `render.yaml`) pinning Python
+to `3.12.7`, rather than upgrading `pydantic`/`pydantic-core` to a newer release.
+
+**What happened:** The first real Render deploy failed at `pip install`.
+`pydantic-core==2.23.4` has no prebuilt wheel for Python 3.14 (Render's current default),
+so pip fell back to building it from source via `maturin`/Rust — which then failed too,
+because Render's build sandbox has a read-only `cargo` registry cache dir. Verified directly
+(not just inferred from the log): `pip download pydantic-core==2.23.4 --python-version 312
+--only-binary=:all:` succeeds with a clean `cp312` wheel; the same command for `--python-
+version 314` finds no matching distribution at all — the earliest version with a 3.14 wheel
+is 2.35.0.
+
+**Alternatives considered:** Bump `pydantic`/`pydantic-core` to a version with 3.14 wheels
+(2.35.0+, or latest 2.47.0); let Render pick whatever Python it defaults to and hope future
+releases fix it.
+
+**Reasoning:** Pinning the Python version is the smaller, more surgical change — one file,
+zero risk of a `pydantic` major-version-adjacent behavior change rippling into
+`pydantic-settings` or FastAPI's request validation, which are exercised by all 46 existing
+tests and weren't worth re-verifying under time pressure the night before a deploy. Bumping
+the dependency is the more forward-looking fix (3.12 support won't be default forever) and
+is a reasonable follow-up once there's time to re-run the full suite against a newer
+`pydantic` deliberately, not as a same-night reaction to a failed build.
+
+**What this is a good example of:** exactly the kind of environment-mismatch failure that
+only shows up at actual deploy time, not in local dev (this sandbox's Python version
+happened to already have wheels available) or in the test suite (which never touches a
+build/install step). Recorded here rather than just fixed silently, because "local tests
+green" and "deployable" turned out to be different claims.
