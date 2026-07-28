@@ -414,3 +414,35 @@ severity in `00-review-20260727.md` is updated to reflect this decision, not del
 past grading — e.g. actually piloted internally at Kuvera — this reclassifies back to a
 blocker immediately; the precedent above justifies a graded demo, not a real deployment
 touching real circulars or a real private codebase.
+
+---
+
+## 14. Deploy target: Render over Railway
+
+**Decision:** Deploy to Render, using a checked-in `render.yaml` for reproducible
+Infrastructure-as-Code setup, rather than Railway.
+
+**Alternatives considered:** Railway (the platform originally discussed); Fly.io.
+
+**Reasoning:** As of mid-2026, Railway no longer has a free tier — it removed its prepaid
+credit option earlier this year and now requires a card on file even for minimal usage.
+Render still offers a genuine free tier (750 instance-hours/month, no card required) with
+first-class background-worker/web-service support, which fits this project's
+`BackgroundTasks`-based architecture and — more importantly for a graded take-home — doesn't
+put a billing surface in front of something that shouldn't cost the reviewer or the
+submitter anything to exist. Fly.io wasn't seriously considered: its edge-latency strengths
+(the reason to pick it) don't matter for a single-reviewer demo with no geographic spread.
+
+**Tradeoffs accepted, stated plainly rather than discovered later:** Render's free tier
+sleeps after 15 minutes idle (30–50s cold-start on wake) and its disk is ephemeral — SQLite
+and uploaded PDFs do not survive a redeploy or restart. Both are fine for a time-boxed
+grading window and explicitly documented in the README rather than left as a surprise.
+`REPO_SUGGESTION_ENABLED` stays `false` in the deployed config specifically so the public
+demo instance can never be pointed at a real codebase, deliberately independent of decision
+#11's local-only design — belt and suspenders.
+
+**What was cut:** A managed Postgres addon for the deployed instance (Render offers one
+free, but it itself expires after a period of inactivity, trading one persistence problem
+for a shorter-lived one) — SQLite-on-ephemeral-disk was judged good enough for a grading
+window, with the swap documented as a one-line `DATABASE_URL` change if persistence turns
+out to matter.

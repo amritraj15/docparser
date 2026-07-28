@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: docparser
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        value: sqlite:///./docparser.db
+      - key: UPLOAD_DIR
+        value: ./uploads
+      - key: LLM_PROVIDER
+        value: anthropic
+      - key: ANTHROPIC_API_KEY
+        sync: false   # set manually in the Render dashboard — never commit real keys
+      - key: EXTRACTION_MODEL
+        value: claude-sonnet-4-6
+      - key: REVIEW_CONFIDENCE_THRESHOLD
+        value: "0.75"
+      - key: REPO_SUGGESTION_ENABLED
+        value: "false"   # stays off on the public demo instance - see decisions.md #11

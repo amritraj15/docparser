@@ -204,6 +204,32 @@ real limitations: fixed-line-window chunking (no per-language parsing), no file-
 (re-run `/repo-index/build` manually after real changes), and no handling for a circular
 that touches multiple unrelated files at once.
 
+## Deploying (Render, free tier)
+
+`render.yaml` in the repo root is a one-click Infrastructure-as-Code config for Render.
+
+1. Push this repo to GitHub (already done: github.com/amritraj15/docparser).
+2. On [render.com](https://render.com), New → Blueprint → connect the GitHub repo. Render
+   reads `render.yaml` automatically and provisions the web service.
+3. Set `ANTHROPIC_API_KEY` in the Render dashboard (Environment tab) — it's deliberately
+   left unset in `render.yaml` (`sync: false`) so a real key never gets committed.
+4. Deploy. First build takes a few minutes; you'll get a `https://docparser-xxxx.onrender.com`
+   URL.
+
+**Two real limitations of the free tier, not swept under the rug:**
+- **Cold start.** The free instance sleeps after 15 minutes idle; the first request after
+  that takes 30–50 seconds to wake it. Not a bug — hit it once before sharing the link if
+  that matters for a first impression.
+- **Ephemeral disk.** SQLite (`docparser.db`) and uploaded PDFs live on local disk, which
+  Render's free tier does **not** persist across redeploys or restarts. Fine for a demo/
+  grading window; for anything longer-lived, point `DATABASE_URL` at Render's free managed
+  Postgres instead (note: that free Postgres instance itself expires after a period of
+  inactivity too — check current Render docs before relying on it past a short window).
+
+`REPO_SUGGESTION_ENABLED` stays `false` in the deployed config on purpose — see the
+security note above and decisions.md #11. That feature is for local use against a real
+codebase, never the public demo instance.
+
 ## Architecture
 
 ```
