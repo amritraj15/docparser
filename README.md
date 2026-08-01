@@ -120,14 +120,25 @@ billing (as happened earlier in this project).
 # .env
 LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=sk-or-...          # from openrouter.ai/keys
-OPENROUTER_MODEL=anthropic/claude-sonnet-latest   # OpenRouter's alias for the current
-                                                    # Sonnet-class model - the default,
-                                                    # verified live at openrouter.ai/models.
-                                                    # Pin an exact slug instead (e.g.
-                                                    # anthropic/claude-sonnet-4.6) if you
-                                                    # need reproducible behavior across a
-                                                    # model upgrade.
+OPENROUTER_MODEL=openrouter/free       # free auto-router - see the risk note below
 ```
+
+**Using the free tier — read this before relying on it.** `openrouter/free` auto-routes to
+whichever currently-available free model supports what the request needs (including tool
+calling), rather than pinning one specific free model — free-tier listings change fast
+(one tracker showed seven free endpoints delisted in a nine-day span), so hardcoding a
+specific `:free` model ID is likely to break on its own timeline, not yours. That said,
+**OpenRouter's free tier has a documented tool-calling failure mode**:
+`"No endpoints found that support tool use"`. This project's entire extraction pipeline
+depends on forced tool-calling, so if you see that error (or extraction just keeps
+failing), it means no free model matching that requirement was available at that moment —
+retry, or switch to a pinned paid model:
+```bash
+OPENROUTER_MODEL=anthropic/claude-sonnet-4.6   # confirmed working, see decisions.md #20
+```
+Free tier also carries request-rate limits (commonly 20/minute, 50–200/day depending on
+account credit history) — fine for trying this out, not something to build a real workflow
+on without adding credits.
 
 **Worth knowing — this is a different API shape under the hood, not just a different key.**
 OpenRouter's primary interface is OpenAI-compatible chat completions, even when the model

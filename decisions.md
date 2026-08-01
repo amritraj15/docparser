@@ -702,6 +702,38 @@ future Anthropic release, which is desirable for "stay current with no maintenan
 wrong for anyone who needs reproducible behavior across a model upgrade — for that, pin an
 exact slug instead, and both `.env.example` and the README say so.
 
+**Addendum 2 — the alias didn't actually work, reverted to the pinned slug:** the first
+real API call against `anthropic/claude-sonnet-latest` failed with `400 "anthropic/
+claude-sonnet-latest is not a valid model ID"`. The search result that surfaced the alias
+showed it under a `~anthropic/claude-sonnet-latest` path (a leading `~`) — possibly that
+prefix was load-bearing and got dropped when transcribing it, or the alias simply isn't
+callable via the chat completions API the way a real model slug is, only reachable as a
+documentation/redirect page. Rather than guess again with no key to verify against,
+reverted the default back to `anthropic/claude-sonnet-4.6` — the slug actually confirmed
+working, first by direct search verification, now additionally by a real request that
+succeeded against everything else in the same call. This is exactly why the earlier
+addendum's own framing ("verified... not verified against a live call") mattered: search
+verification confirms a model *exists*, not that a given ID string is *callable* the way
+written — those turned out to be different claims, and only the second one actually
+matters here.
+
+**Addendum 3 — switched default to `openrouter/free` on request, with the real risk
+disclosed rather than hidden:** the user asked for a free OpenRouter model specifically.
+Two things made pinning one specific free model (e.g. `qwen/qwen3-coder:free`) the wrong
+default: free-tier listings are documented as changing fast enough that trackers checked
+days apart disagree about which models are even still free, and — more importantly for
+this project specifically — OpenRouter's free tier has a documented tool-calling failure
+mode (`"No endpoints found that support tool use"`), which would silently break every
+extraction call, since this pipeline's entire design depends on forced tool-calling
+succeeding. `openrouter/free`, OpenRouter's own auto-router, filters free candidates by
+required capability (including tool calling) rather than betting on one name staying both
+listed and tool-call-capable. This doesn't eliminate the failure mode — it's still
+possible no qualifying free model is available at request time — but it's the more
+resilient default of the two bad options, and both the README and `.env.example` say so
+plainly rather than presenting `openrouter/free` as a solved problem. A pinned paid model
+(`anthropic/claude-sonnet-4.6`, already confirmed working) is documented as the fallback
+the moment free-tier reliability stops being good enough.
+
 ---
 
 ## 21. Local Supabase as an optional local-dev database — no code change required
