@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>docparser — BSE Circular Register</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;0,8..60,700;1,8..60,500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #12161C;
+    --slate: #1C232D;
+    --slate-2: #232B36;
+    --paper: #E8E4D9;
+    --paper-dim: #A8A395;
+    --brass: #C9A227;
+    --brass-dim: #8C7620;
+    --sage: #6B8F71;
+    --oxblood: #A24B4B;
+    --hairline: #333d4a;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ink);
+    color: var(--paper);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a { color: var(--brass); }
+
+  .mono { font-family: 'IBM Plex Mono', monospace; }
+
+  ::selection { background: var(--brass); color: var(--ink); }
+
+  :focus-visible {
+    outline: 2px solid var(--brass);
+    outline-offset: 2px;
+  }
+
+  /* ---------- Ticker header ---------- */
+  header.ticker {
+    border-bottom: 1px solid var(--hairline);
+    padding: 20px 32px;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  header.ticker .title {
+    font-family: 'Source Serif 4', serif;
+    font-weight: 600;
+    font-size: 22px;
+    letter-spacing: 0.01em;
+  }
+  header.ticker .title small {
+    display: block;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--paper-dim);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+  .stats {
+    display: flex;
+    gap: 28px;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  .stat { text-align: right; }
+  .stat .n {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--brass);
+  }
+  .stat .n.zero { color: var(--paper-dim); }
+  .stat .label {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--paper-dim);
+  }
+  .pulse {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--brass);
+    margin-left: 6px;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.25; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pulse { animation: none; }
+  }
+
+  /* ---------- Tabs ---------- */
+  nav.tabs {
+    display: flex;
+    gap: 4px;
+    padding: 0 32px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  nav.tabs button {
+    background: none;
+    border: none;
+    color: var(--paper-dim);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 14px 6px;
+    margin-right: 24px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+  }
+  nav.tabs button:hover { color: var(--paper); }
+  nav.tabs button.active {
+    color: var(--brass);
+    border-bottom-color: var(--brass);
+  }
+
+  main { max-width: 920px; margin: 0 auto; padding: 32px; }
+
+  /* ---------- Empty states ---------- */
+  .empty {
+    text-align: center;
+    padding: 72px 24px;
+  }
+  .stamp {
+    display: inline-block;
+    border: 3px solid var(--sage);
+    color: var(--sage);
+    font-family: 'Source Serif 4', serif;
+    font-weight: 700;
+    font-size: 20px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 10px 24px;
+    border-radius: 4px;
+    transform: rotate(-4deg);
+    opacity: 0.9;
+  }
+  .empty p {
+    margin-top: 20px;
+    color: var(--paper-dim);
+    font-size: 14px;
+  }
+  .stamp.oxblood { border-color: var(--oxblood); color: var(--oxblood); }
+
+  /* ---------- Ledger entries (review queue) ---------- */
+  .entry {
+    border-bottom: 1px solid var(--hairline);
+    padding: 20px 0;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px 24px;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+  }
+  .entry.leaving {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  .entry .context {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--paper-dim);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    grid-column: 1 / -1;
+  }
+  .entry .field-name {
+    font-family: 'Source Serif 4', serif;
+    font-style: italic;
+    font-size: 18px;
+    color: var(--paper);
+  }
+  .entry .confidence {
+    font-family: 'IBM Plex Mono', monospace;
+    text-align: right;
+    font-size: 13px;
+  }
+  .entry .confidence .pct { font-weight: 600; }
+  .entry .confidence .bar {
+    width: 80px; height: 3px;
+    background: var(--slate-2);
+    margin-top: 6px;
+    margin-left: auto;
+    position: relative;
+    overflow: hidden;
+  }
+  .entry .confidence .bar > span {
+    position: absolute; left: 0; top: 0; bottom: 0;
+    background: var(--oxblood);
+  }
+  .entry .value-row {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 16px;
+    align-items: baseline;
+    flex-wrap: wrap;
+    font-size: 14px;
+  }
+  .entry .value-row .guessed {
+    color: var(--paper-dim);
+  }
+  .entry .value-row .guessed .v { color: var(--paper); font-family: 'IBM Plex Mono', monospace; }
+  .entry .source-note {
+    grid-column: 1 / -1;
+    font-style: italic;
+    color: var(--paper-dim);
+    font-size: 13px;
+    border-left: 2px solid var(--hairline);
+    padding-left: 12px;
+  }
+  .entry .actions {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 10px;
+    margin-top: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  button.btn {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 8px 16px;
+    border-radius: 3px;
+    border: 1px solid var(--hairline);
+    background: transparent;
+    color: var(--paper);
+    cursor: pointer;
+  }
+  button.btn:hover { border-color: var(--paper-dim); }
+  button.btn.confirm { border-color: var(--sage); color: var(--sage); }
+  button.btn.confirm:hover { background: var(--sage); color: var(--ink); }
+  button.btn.correct { border-color: var(--brass); color: var(--brass); }
+  button.btn.correct:hover { background: var(--brass); color: var(--ink); }
+  button.btn:disabled { opacity: 0.4; cursor: default; }
+
+  .correct-form {
+    grid-column: 1 / -1;
+    display: none;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 14px;
+    background: var(--slate);
+    border-radius: 4px;
+  }
+  .correct-form.open { display: flex; flex-direction: column; }
+  .correct-form input, .correct-form textarea {
+    background: var(--ink);
+    border: 1px solid var(--hairline);
+    color: var(--paper);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    padding: 8px 10px;
+    border-radius: 3px;
+  }
+  .correct-form label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--paper-dim);
+    margin-bottom: 4px;
+    display: block;
+  }
+
+  /* stamp-on-resolve animation */
+  .stamp-flash {
+    position: fixed;
+    pointer-events: none;
+    font-family: 'Source Serif 4', serif;
+    font-weight: 700;
+    font-size: 28px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    border: 3px solid var(--brass);
+    color: var(--brass);
+    padding: 10px 22px;
+    border-radius: 4px;
+    z-index: 999;
+    animation: stampIn 0.7s ease forwards;
+  }
+  @keyframes stampIn {
+    0% { transform: scale(2.2) rotate(-8deg); opacity: 0; }
+    35% { transform: scale(1) rotate(-6deg); opacity: 1; }
+    75% { transform: scale(1) rotate(-6deg); opacity: 1; }
+    100% { transform: scale(1) rotate(-6deg); opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .stamp-flash { animation: none; opacity: 0; }
+  }
+
+  /* ---------- Documents view ---------- */
+  .dropzone {
+    border: 1.5px dashed var(--hairline);
+    border-radius: 6px;
+    padding: 28px;
+    text-align: center;
+    color: var(--paper-dim);
+    font-size: 13px;
+    margin-bottom: 28px;
+    cursor: pointer;
+  }
+  .dropzone.drag { border-color: var(--brass); color: var(--brass); background: rgba(201,162,39,0.05); }
+  .dropzone strong { color: var(--paper); }
+  .dropzone input { display: none; }
+
+  .doc-row {
+    border-bottom: 1px solid var(--hairline);
+    padding: 16px 0;
+    cursor: pointer;
+  }
+  .doc-row .top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+  .doc-row .filename {
+    font-family: 'Source Serif 4', serif;
+    font-size: 16px;
+  }
+  .doc-row .meta {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--paper-dim);
+    margin-top: 4px;
+  }
+  .status-dot {
+    display: inline-block;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    margin-right: 7px;
+  }
+  .status-dot.uploaded, .status-dot.processing { background: var(--paper-dim); }
+  .status-dot.needs_review { background: var(--brass); }
+  .status-dot.complete { background: var(--sage); }
+  .status-dot.failed { background: var(--oxblood); }
+  .status-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .doc-detail {
+    display: none;
+    margin-top: 14px;
+    padding: 14px;
+    background: var(--slate);
+    border-radius: 4px;
+    font-size: 13px;
+  }
+  .doc-detail.open { display: block; }
+  .doc-detail .field-line {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--hairline);
+    gap: 12px;
+  }
+  .doc-detail .field-line:last-child { border-bottom: none; }
+  .doc-detail .fname { color: var(--paper-dim); font-family: 'IBM Plex Mono', monospace; font-size: 11px; text-transform: uppercase; }
+  .doc-detail .fval { text-align: right; font-family: 'IBM Plex Mono', monospace; }
+  .doc-detail .error {
+    color: var(--oxblood);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    margin-bottom: 10px;
+  }
+
+  .toast {
+    position: fixed;
+    bottom: 24px; left: 50%;
+    transform: translateX(-50%);
+    background: var(--slate);
+    border: 1px solid var(--hairline);
+    color: var(--paper);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    padding: 10px 18px;
+    border-radius: 4px;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+  .toast.err { border-color: var(--oxblood); color: var(--oxblood); }
+
+  @media (max-width: 600px) {
+    header.ticker { padding: 16px 18px; }
+    nav.tabs { padding: 0 18px; }
+    main { padding: 20px 18px; }
+    .stats { gap: 16px; }
+    .entry { grid-template-columns: 1fr; }
+    .entry .confidence { text-align: left; }
+    .entry .confidence .bar { margin-left: 0; }
+  }
+</style>
+</head>
+<body>
+
+<header class="ticker">
+  <div class="title">Circular Register
+    <small>docparser · BSE notices for Kuvera StAR MF</small>
+  </div>
+  <div class="stats" id="stats">
+    <div class="stat"><div class="n mono" id="stat-pending">–</div><div class="label">Pending review</div></div>
+    <div class="stat"><div class="n mono" id="stat-docs">–</div><div class="label">Documents</div></div>
+    <div class="stat"><div class="n mono" id="stat-impacting">–</div><div class="label">System-impacting</div></div>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="active" data-tab="queue">Review Queue</button>
+  <button data-tab="docs">Documents</button>
+</nav>
+
+<main>
+  <section id="view-queue"></section>
+  <section id="view-docs" style="display:none"></section>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const el = (sel, root=document) => root.querySelector(sel);
+const els = (sel, root=document) => Array.from(root.querySelectorAll(sel));
+
+let docsCache = {}; // id -> document summary, used for context labels in the queue
+
+function showToast(msg, isErr=false) {
+  const t = el('#toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (isErr ? ' err' : '');
+  clearTimeout(showToast._h);
+  showToast._h = setTimeout(() => t.classList.remove('show'), 3200);
+}
+
+function fmtPct(c) { return Math.round(c * 100) + '%'; }
+
+function timeAgo(iso) {
+  const d = new Date(iso + 'Z');
+  const s = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return Math.floor(s/60) + 'm ago';
+  if (s < 86400) return Math.floor(s/3600) + 'h ago';
+  return Math.floor(s/86400) + 'd ago';
+}
+
+async function api(path, opts={}) {
+  const res = await fetch(path, opts);
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { const j = await res.json(); detail = j.detail || detail; } catch (e) {}
+    const err = new Error(detail);
+    err.status = res.status;
+    throw err;
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+/* ---------------- Stats ---------------- */
+async function refreshStats() {
+  const [queue, docs] = await Promise.all([
+    api('/review/queue?status=pending'),
+    api('/documents'),
+  ]);
+  docsCache = Object.fromEntries(docs.map(d => [d.id, d]));
+
+  el('#stat-pending').textContent = queue.length;
+  el('#stat-pending').className = 'n mono' + (queue.length === 0 ? ' zero' : '');
+  el('#stat-docs').textContent = docs.length;
+
+  // system_impacting count needs field data - fetch details lazily only if there are docs
+  let impactingCount = 0;
+  const complete = docs.filter(d => d.status === 'complete' || d.status === 'needs_review');
+  for (const d of complete.slice(0, 25)) { // cap to keep this cheap on a busy queue
+    try {
+      const detail = await api('/documents/' + d.id);
+      const f = detail.fields.find(f => f.field_name === 'system_impacting');
+      if (f && String(f.field_value).toLowerCase() === 'true') impactingCount++;
+    } catch (e) { /* skip */ }
+  }
+  el('#stat-impacting').textContent = impactingCount;
+
+  return { queue, docs };
+}
+
+/* ---------------- Review Queue view ---------------- */
+async function renderQueue() {
+  const container = el('#view-queue');
+  let queue;
+  try {
+    queue = await api('/review/queue?status=pending');
+  } catch (e) {
+    container.innerHTML = `<p class="mono" style="color:var(--oxblood)">Couldn't load the queue: ${e.message}</p>`;
+    return;
+  }
+
+  if (queue.length === 0) {
+    container.innerHTML = `
+      <div class="empty">
+        <div class="stamp">All Clear</div>
+        <p>Nothing needs your review right now. New low-confidence classifications will land here.</p>
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = queue.map(item => entryHtml(item)).join('');
+
+  els('.entry', container).forEach(entryEl => {
+    const id = entryEl.dataset.id;
+    el('.confirm', entryEl).addEventListener('click', () => resolve(id, entryEl, { action: 'confirm' }));
+    el('.correct', entryEl).addEventListener('click', () => {
+      const form = el('.correct-form', entryEl);
+      form.classList.toggle('open');
+      if (form.classList.contains('open')) el('input.value', form).focus();
+    });
+    el('.correct-form .submit', entryEl).addEventListener('click', () => {
+      const value = el('.correct-form input.value', entryEl).value.trim();
+      const note = el('.correct-form textarea', entryEl).value.trim();
+      if (!value) { showToast('Enter a corrected value first.', true); return; }
+      resolve(id, entryEl, { action: 'correct', corrected_value: value, reviewer_note: note || null });
+    });
+  });
+}
+
+function entryHtml(item) {
+  const doc = docsCache[item.document_id];
+  const docLabel = doc ? `${doc.filename} · ${doc.doc_type || 'unclassified'}` : item.document_id.slice(0, 8);
+  const pct = fmtPct(item.confidence);
+  const pctColor = item.confidence < 0.4 ? 'var(--oxblood)' : 'var(--brass)';
+  return `
+    <div class="entry" data-id="${item.id}">
+      <div class="context">${escapeHtml(docLabel)}</div>
+      <div class="field-name">${escapeHtml(item.field_name)}</div>
+      <div class="confidence">
+        <span class="pct" style="color:${pctColor}">${pct}</span> confidence
+        <div class="bar"><span style="width:${Math.round(item.confidence*100)}%; background:${pctColor}"></span></div>
+      </div>
+      <div class="value-row">
+        <span class="guessed">model guessed <span class="v">${escapeHtml(item.original_value ?? '—')}</span></span>
+      </div>
+      ${item.source_note ? `<div class="source-note">“${escapeHtml(item.source_note)}”</div>` : ''}
+      <div class="actions">
+        <button class="btn confirm">Confirm</button>
+        <button class="btn correct">Correct →</button>
+      </div>
+      <div class="correct-form">
+        <label>Corrected value</label>
+        <input class="value" type="text" placeholder="e.g. frontend">
+        <label style="margin-top:8px">Note (optional)</label>
+        <textarea rows="2" placeholder="Why the model's guess was wrong"></textarea>
+        <div style="margin-top:10px"><button class="btn submit correct">Submit correction</button></div>
+      </div>
+    </div>`;
+}
+
+async function resolve(id, entryEl, body) {
+  els('.btn', entryEl).forEach(b => b.disabled = true);
+  try {
+    await api(`/review/${id}/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    flashStamp(entryEl, body.action === 'confirm' ? 'Confirmed' : 'Corrected');
+    entryEl.classList.add('leaving');
+    setTimeout(async () => {
+      entryEl.remove();
+      if (el('#view-queue').children.length === 0) renderQueue(); // show empty state
+      refreshStats();
+    }, 300);
+  } catch (e) {
+    showToast('Could not save: ' + e.message, true);
+    els('.btn', entryEl).forEach(b => b.disabled = false);
+  }
+}
+
+function flashStamp(anchorEl, label) {
+  const rect = anchorEl.getBoundingClientRect();
+  const stamp = document.createElement('div');
+  stamp.className = 'stamp-flash';
+  stamp.textContent = label;
+  stamp.style.left = (rect.left + rect.width/2 - 70) + 'px';
+  stamp.style.top = (rect.top + rect.height/2 - 24) + 'px';
+  document.body.appendChild(stamp);
+  setTimeout(() => stamp.remove(), 750);
+}
+
+/* ---------------- Documents view ---------------- */
+async function renderDocs() {
+  const container = el('#view-docs');
+  let docs;
+  try {
+    docs = await api('/documents');
+  } catch (e) {
+    docs = [];
+  }
+
+  const dropzoneHtml = `
+    <div class="dropzone" id="dropzone">
+      <strong>Drop a circular PDF here</strong> or click to browse.
+      <input type="file" id="file-input" accept="application/pdf">
+    </div>`;
+
+  if (docs.length === 0) {
+    container.innerHTML = dropzoneHtml + `
+      <div class="empty">
+        <p>No circulars yet. Upload one above to see how it gets classified.</p>
+      </div>`;
+  } else {
+    container.innerHTML = dropzoneHtml + docs.map(docRowHtml).join('');
+  }
+
+  wireDropzone();
+  els('.doc-row', container).forEach(row => {
+    row.addEventListener('click', (ev) => {
+      if (ev.target.closest('button')) return;
+      toggleDocDetail(row);
+    });
+  });
+}
+
+function docRowHtml(doc) {
+  return `
+    <div class="doc-row" data-id="${doc.id}">
+      <div class="top">
+        <div>
+          <div class="filename">${escapeHtml(doc.filename)}</div>
+          <div class="meta"><span class="status-dot ${doc.status}"></span><span class="status-label">${doc.status.replace('_',' ')}</span> · ${doc.doc_type || 'unclassified'} · ${timeAgo(doc.created_at)}</div>
+        </div>
+        ${doc.status === 'failed' ? `<button class="btn retry mono">Retry</button>` : ''}
+      </div>
+      <div class="doc-detail"></div>
+    </div>`;
+}
+
+async function toggleDocDetail(row) {
+  const detail = el('.doc-detail', row);
+  const isOpen = detail.classList.contains('open');
+  if (isOpen) { detail.classList.remove('open'); return; }
+
+  detail.classList.add('open');
+  detail.innerHTML = `<div class="mono" style="color:var(--paper-dim)">loading…</div>`;
+  const id = row.dataset.id;
+  try {
+    const doc = await api('/documents/' + id);
+    let html = '';
+    if (doc.error_message) html += `<div class="error">${escapeHtml(doc.error_message)}</div>`;
+    if (doc.fields.length === 0) {
+      html += `<div class="mono" style="color:var(--paper-dim)">No fields extracted yet.</div>`;
+    } else {
+      html += doc.fields
+        .filter(f => !f.is_list_item)
+        .map(f => `<div class="field-line"><span class="fname">${escapeHtml(f.field_name)}</span><span class="fval">${escapeHtml(String(f.field_value ?? '—'))} <span style="color:var(--paper-dim)">(${fmtPct(f.confidence)})</span></span></div>`)
+        .join('');
+      const keyPoints = doc.fields.filter(f => f.is_list_item);
+      if (keyPoints.length) {
+        html += `<div style="margin-top:10px; font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:var(--paper-dim)">Key points</div>`;
+        html += keyPoints.map(f => `<div class="field-line"><span class="fval" style="text-align:left">“${escapeHtml(f.field_value)}”</span></div>`).join('');
+      }
+    }
+    detail.innerHTML = html;
+
+    const retryBtn = el('.retry', row);
+    if (retryBtn) {
+      retryBtn.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        retryBtn.disabled = true;
+        retryBtn.textContent = 'Retrying…';
+        try {
+          await api('/documents/' + id + '/reprocess', { method: 'POST' });
+          showToast('Reprocessing started.');
+          renderDocs();
+          refreshStats();
+        } catch (e) {
+          showToast('Retry failed: ' + e.message, true);
+          retryBtn.disabled = false;
+          retryBtn.textContent = 'Retry';
+        }
+      });
+    }
+  } catch (e) {
+    detail.innerHTML = `<div class="error">Couldn't load detail: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function wireDropzone() {
+  const zone = el('#dropzone');
+  const input = el('#file-input');
+  if (!zone) return;
+  zone.addEventListener('click', () => input.click());
+  input.addEventListener('change', () => { if (input.files[0]) uploadFile(input.files[0]); });
+  ['dragenter','dragover'].forEach(evt => zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.add('drag'); }));
+  ['dragleave','drop'].forEach(evt => zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.remove('drag'); }));
+  zone.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) uploadFile(f); });
+}
+
+async function uploadFile(file) {
+  const form = new FormData();
+  form.append('file', file);
+  try {
+    const doc = await api('/documents', { method: 'POST', body: form });
+    showToast(`Uploaded ${doc.filename} — classifying…`);
+    renderDocs();
+    refreshStats();
+    pollDocument(doc.id);
+  } catch (e) {
+    showToast('Upload failed: ' + e.message, true);
+  }
+}
+
+function pollDocument(id, attempts=0) {
+  if (attempts > 20) return;
+  setTimeout(async () => {
+    try {
+      const doc = await api('/documents/' + id);
+      if (doc.status === 'processing' || doc.status === 'uploaded') {
+        pollDocument(id, attempts + 1);
+      } else {
+        showToast(`${doc.filename}: ${doc.status.replace('_',' ')}`, doc.status === 'failed');
+        if (el('#view-docs').style.display !== 'none') renderDocs();
+        refreshStats();
+      }
+    } catch (e) { /* stop polling on error */ }
+  }, 3000);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+/* ---------------- Tabs ---------------- */
+els('nav.tabs button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    els('nav.tabs button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const tab = btn.dataset.tab;
+    el('#view-queue').style.display = tab === 'queue' ? '' : 'none';
+    el('#view-docs').style.display = tab === 'docs' ? '' : 'none';
+    if (tab === 'docs') renderDocs();
+  });
+});
+
+/* ---------------- Init ---------------- */
+(async function init() {
+  await refreshStats();
+  await renderQueue();
+})();
+</script>
+</body>
+</html>
