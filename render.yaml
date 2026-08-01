@@ -11,7 +11,11 @@ services:
                         # (e.g. 3.14, Render's default) and fails building from source in
                         # Render's sandbox (read-only cargo cache) - see decisions.md #15
       - key: DATABASE_URL
-        value: sqlite:///./docparser.db
+        sync: false   # set to your Neon (or other Postgres) connection string in the
+                      # Render dashboard - SQLite's local disk doesn't survive a free-tier
+                      # spin-down/restart, so it's not a safe default here. See
+                      # decisions.md #19. Falls back to local SQLite only if unset, which
+                      # is fine for local dev, not for this deployed instance.
       - key: UPLOAD_DIR
         value: ./uploads
       - key: LLM_PROVIDER
