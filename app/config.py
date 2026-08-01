@@ -21,8 +21,11 @@ class Settings(BaseSettings):
     # Anthropic direct), not a privacy-preserving option - do not use for the repo-
     # suggestion embedding path (that stays hard-locked to local Ollama regardless).
     openrouter_api_key: str = ""
-    openrouter_model: str = "anthropic/claude-sonnet-4.6"  # verify current slug at
-                                                             # openrouter.ai/models - these drift
+    openrouter_model: str = "anthropic/claude-sonnet-latest"  # OpenRouter's alias that
+                            # always redirects to the current Sonnet-class model - avoids
+                            # ever needing to update this by hand. Pin to an exact version
+                            # (e.g. "anthropic/claude-sonnet-4.6") instead if you need
+                            # reproducible behavior across a model upgrade.
     openrouter_site_url: str = ""   # optional, sent as HTTP-Referer for openrouter.ai rankings
     openrouter_app_name: str = "docparser"  # optional, sent as X-Title
     openrouter_timeout_seconds: float = 120.0

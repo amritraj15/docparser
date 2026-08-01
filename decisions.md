@@ -691,6 +691,17 @@ not a runtime decision. The `OPENROUTER_MODEL` default is a best-effort current 
 verified against a live call (no key available) — the README and `.env.example` both flag
 that these slugs drift and point at `openrouter.ai/models` to confirm before relying on it.
 
+**Addendum — model slug verified, default switched to an alias:** searched
+`openrouter.ai/models` directly rather than leaving the uncertainty open. The original
+default (`anthropic/claude-sonnet-4.6`) turned out to be correct — but OpenRouter also
+publishes `anthropic/claude-sonnet-latest`, an alias that always redirects to whichever
+Sonnet-class model is current. Switched the default to that alias, since it removes the
+"slugs drift, go check" caveat entirely rather than just resolving it once. Documented the
+tradeoff plainly: the alias means the model you get can change out from under you on a
+future Anthropic release, which is desirable for "stay current with no maintenance" but
+wrong for anyone who needs reproducible behavior across a model upgrade — for that, pin an
+exact slug instead, and both `.env.example` and the README say so.
+
 ---
 
 ## 21. Local Supabase as an optional local-dev database — no code change required

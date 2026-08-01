@@ -120,7 +120,13 @@ billing (as happened earlier in this project).
 # .env
 LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=sk-or-...          # from openrouter.ai/keys
-OPENROUTER_MODEL=anthropic/claude-sonnet-4.6   # verify the current slug at openrouter.ai/models
+OPENROUTER_MODEL=anthropic/claude-sonnet-latest   # OpenRouter's alias for the current
+                                                    # Sonnet-class model - the default,
+                                                    # verified live at openrouter.ai/models.
+                                                    # Pin an exact slug instead (e.g.
+                                                    # anthropic/claude-sonnet-4.6) if you
+                                                    # need reproducible behavior across a
+                                                    # model upgrade.
 ```
 
 **Worth knowing — this is a different API shape under the hood, not just a different key.**
