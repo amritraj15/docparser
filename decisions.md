@@ -589,3 +589,138 @@ decisions.md #12) so it isn't rediscovered the same way twice.
 bootstrapped `AGENTS.md` gets a lightweight human review before being trusted — "show a
 short summary, ask what's wrong or missing." That review hasn't happened yet; this decision
 entry is the build, not the sign-off.
+
+---
+
+## 19. Persistence fix: Neon Postgres over Render's free Postgres or Supabase
+
+**Decision:** Make `DATABASE_URL` on the deployed Render instance point at a Neon
+(neon.tech) free Postgres database, instead of relying on the SQLite default that
+`render.yaml` originally shipped with.
+
+**What prompted this:** confirmed directly against Render's current docs (not assumed):
+free-tier services have an ephemeral filesystem wiped on *every* restart, redeploy, or
+15-minute-idle spin-down — not just occasionally between deploys, which is what the
+earlier README wording implied. In practice this meant the deployed instance was silently
+losing all uploaded documents and classifications on a regular, expected basis, not as a
+rare edge case. This is a correction to decision #14's original framing, not a new problem.
+
+**Alternatives considered:** Render's own free managed Postgres (one click, same
+dashboard); Supabase free tier.
+
+**Reasoning:** Render's free Postgres expires 30 days after creation (with a 14-day grace
+period) — fine for the grading window specifically, but trades one persistence problem for
+a shorter-lived one, and decision #14 already flagged this tradeoff without committing to
+it. Neon doesn't have that expiry. Supabase was rejected for the same reason Supabase
+tends to get rejected in this project's decisions: it bundles auth, storage, and realtime
+that nothing here uses, and the entire point of this fix is adding exactly one thing
+(durable Postgres), not a second product surface to reason about.
+
+**Implementation, verified not assumed:**
+- `psycopg2-binary==2.9.10` added to `requirements.txt` — checked directly (`pip download
+  ... --python-version 312 --only-binary=:all:`) that it has a real prebuilt `cp312`
+  manylinux wheel, specifically because the last dependency added to this project
+  (`pydantic-core`) did NOT have a wheel for the deployed Python version and broke the
+  build (decisions.md #15) — not repeating that mistake blind twice.
+- `app/database.py` now normalizes a legacy `postgres://` URL scheme to `postgresql://`
+  before handing it to SQLAlchemy, which rejects the old scheme outright (a real gotcha
+  some copy-pasted connection strings — Heroku-style ones especially — still carry).
+  Covered by `tests/test_database.py`, including that this doesn't over-replace if the
+  substring appears again later in the URL (e.g. inside a password).
+- `render.yaml`'s `DATABASE_URL` switched from a hardcoded SQLite value to `sync: false`
+  (same pattern already proven working for `ANTHROPIC_API_KEY`), so the real Neon
+  connection string lives only in Render's dashboard, never committed.
+- Full test suite re-run after adding the dependency: 51 passed (47 + 4 new for the URL
+  normalization).
+
+**What this does NOT fix, stated plainly rather than implied:** uploaded PDF *files*
+themselves still live on local disk and are still lost on every restart — only the
+database-backed classification data (documents, extracted fields, review items) persists
+with this change. Fixing file persistence too would mean object storage (S3/R2) and is a
+separate piece of scope, not bundled into this fix.
+
+---
+
+## 20. Third LLM provider: OpenRouter, built as its own code path, not a key-swap
+
+**Decision:** Add `LLM_PROVIDER=openrouter` as a third extraction provider alongside
+Anthropic direct and local Ollama, implemented as `_extract_via_openrouter()` — its own
+function with its own request shape, not an attempt to point the existing Anthropic SDK
+client at OpenRouter's base URL.
+
+**Why not just swap the base_url on the Anthropic SDK:** OpenRouter's primary,
+documented interface is OpenAI-compatible chat completions — even for routing to Claude
+models. There is a route where Claude Code CLI points the Anthropic SDK's `base_url` at
+OpenRouter directly, but whether that passthrough correctly handles this project's two
+Anthropic-specific mechanisms (native `document` content blocks for PDFs, and forced
+`tool_choice: {"type": "tool", ...}`) isn't something documented as a general guarantee
+for third-party use of the raw SDK — and there was no OpenRouter key available to verify
+it empirically either way. Rather than ship a maybe-correct shortcut and find out from a
+silently-wrong classification later, this was built against OpenRouter's actually-documented
+API shape instead.
+
+**What's genuinely different in the OpenRouter path, verified against current docs before
+writing any code:**
+- PDFs go in as a `{"type": "file", "file": {"filename": ..., "file_data": "data:application/pdf;base64,..."}}`
+  content block — OpenAI's file-input shape, not Anthropic's `document` block.
+- Forced tool selection uses OpenAI's function-calling shape (`tools: [{"type": "function", ...}]`,
+  `tool_choice: {"type": "function", "function": {"name": ...}}`), reusing the exact same
+  `EXTRACTION_SCHEMA` already shared between the Anthropic and Ollama paths — the schema
+  didn't need to change, only how it's wrapped for each provider's calling convention.
+- Implemented via raw `httpx` calls (same pattern as the Ollama path), not the `openai`
+  SDK — avoids adding a second HTTP client library for what's a handful of fields in a
+  JSON request body.
+
+**Explicitly not a privacy option:** stated in both the README and here, since it would be
+easy to mentally lump this in with the local Ollama path as "the non-Anthropic option."
+OpenRouter is a cloud aggregator; circulars sent through it leave the machine the same way
+they do with Anthropic direct. Only Ollama keeps documents local.
+
+**Tested against real API shapes, not just the happy path:** `tests/test_openrouter_extraction.py`
+covers the PDF-as-file-block and forced-tool-call request shape, both optional headers
+(`HTTP-Referer`/`X-Title`), a missing API key, a connection failure, a credit-balance-style
+4xx error (mirroring the real "credit balance too low" error this project already hit with
+direct Anthropic — confirming the error body surfaces in `Document.error_message` rather
+than being swallowed), a response with no tool call at all, and malformed tool-call
+arguments. 8 new tests, 59 total, all green.
+
+**What was cut:** No automatic fallback between providers (try OpenRouter, fall back to
+Anthropic, etc.) — same reasoning as decision #9's original scope cut for Ollama/Anthropic,
+just extended to the third option. Provider selection stays a config choice per deployment,
+not a runtime decision. The `OPENROUTER_MODEL` default is a best-effort current slug, not
+verified against a live call (no key available) — the README and `.env.example` both flag
+that these slugs drift and point at `openrouter.ai/models` to confirm before relying on it.
+
+---
+
+## 21. Local Supabase as an optional local-dev database — no code change required
+
+**Decision:** Document `supabase start` (the Supabase CLI's local Docker stack) as a
+supported way to get a persistent local Postgres for development, as an alternative to the
+default SQLite file — without changing any application code, because `DATABASE_URL` has
+been Postgres-agnostic since decision #19.
+
+**Why this doesn't contradict decision #19's rejection of Supabase:** that decision was
+about the *deployed* instance specifically — Supabase's bundled auth/storage/realtime was
+the wrong tradeoff for adding exactly one thing (durable Postgres) to a public deployment.
+Local development is a different context: the bundle is disposable, runs on the
+developer's own machine, and Supabase's Studio UI (a genuine, real benefit not available
+from Neon) makes it easy to browse the `documents`/`extracted_fields`/`review_items` tables
+directly while developing — which is exactly the "history of uploads" visibility being
+asked for here. Same tool, different tradeoff, because the context changed, not because
+decision #19 was wrong.
+
+**Verified, not assumed:** the default local connection string
+(`postgresql://postgres:postgres@localhost:54322/postgres`) and Studio URL
+(`http://localhost:54323`) were confirmed directly from a real `supabase start` output
+found in current documentation, not recalled from memory — connection-string mismatches
+are exactly the kind of thing worth checking given this project's own history with
+environment-specific surprises (decisions #15, #19).
+
+**What was cut:** No `docker-compose.yml` checked into this repo for a minimal
+Postgres-only local stack. `supabase start -x gotrue,storage-api,realtime,imgproxy,edge-runtime`
+already gets a lighter footprint through the official CLI without maintaining a second,
+parallel local-infra definition that could drift from what the CLI actually provisions.
+`supabase/` (the CLI's local config/state) is gitignored — it's a per-developer local
+provisioning choice, not shared project configuration, consistent with how `.env` and
+`uploads/` are already treated.

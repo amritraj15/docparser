@@ -18,8 +18,8 @@ relies on it.
   (e.g. 3.14, Render's default) and fails building from source in Render's sandbox
   (read-only cargo cache). See decisions.md #15 before ever bumping this casually.
 - Framework(s): FastAPI (API layer), SQLAlchemy 2.0 (ORM), Pydantic v2 +
-  pydantic-settings (schemas/config), Anthropic SDK + local Ollama (LLM providers),
-  PyMuPDF (`fitz`) for PDF→image rendering.
+  pydantic-settings (schemas/config), Anthropic SDK + local Ollama + OpenRouter (LLM
+  providers, three options via LLM_PROVIDER), PyMuPDF (`fitz`) for PDF→image rendering.
 - Dependency manager & lockfile: pip + `requirements.txt` (exact-pinned with `==`, no
   lockfile beyond that, no Poetry/pipenv).
 

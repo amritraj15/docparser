@@ -20,6 +20,7 @@ Design notes (see decisions.md for the full reasoning):
 """
 import base64
 import json
+import os
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -201,17 +202,22 @@ def _read_file_bytes(file_path: str) -> bytes:
 def extract_document(file_path: str, client: Optional[anthropic.Anthropic] = None) -> ExtractionResult:
     """
     Runs classification + field extraction and returns a normalized ExtractionResult.
-    Dispatches to Anthropic or a local Ollama model based on settings.llm_provider.
-    Raises ExtractionError on anything that prevents us from getting structured data back
-    (unreadable file, API/connection failure, model declined/failed to return valid JSON).
+    Dispatches to Anthropic, a local Ollama model, or OpenRouter based on
+    settings.llm_provider. Raises ExtractionError on anything that prevents us from
+    getting structured data back (unreadable file, API/connection failure, model
+    declined/failed to return valid JSON).
     """
     provider = settings.llm_provider.lower()
     if provider == "anthropic":
         payload = _extract_via_anthropic(file_path, client=client)
     elif provider == "ollama":
         payload = _extract_via_ollama(file_path)
+    elif provider == "openrouter":
+        payload = _extract_via_openrouter(file_path)
     else:
-        raise ExtractionError(f"Unknown llm_provider '{settings.llm_provider}' (expected 'anthropic' or 'ollama').")
+        raise ExtractionError(
+            f"Unknown llm_provider '{settings.llm_provider}' (expected 'anthropic', 'ollama', or 'openrouter')."
+        )
 
     return _safe_normalize(payload)
 
@@ -354,6 +360,99 @@ def _extract_via_ollama(file_path: str) -> dict:
         raise ExtractionError(
             f"Ollama did not return valid JSON (model may not support structured output): {e}"
         ) from e
+
+
+def _extract_via_openrouter(file_path: str) -> dict:
+    """
+    OpenRouter's primary interface is OpenAI-compatible chat completions, not Anthropic's
+    native Messages API - even when the routed model is a Claude model. This means the
+    request shape differs from _extract_via_anthropic in two real ways, not just the auth
+    header:
+      - PDFs go in as a `type: "file"` content block with a base64 data URL, not
+        Anthropic's `type: "document"` block.
+      - Forced tool selection uses OpenAI's `tools` + `tool_choice` function-calling shape,
+        not Anthropic's `tool_choice: {"type": "tool", ...}`.
+    Both were verified against OpenRouter's current docs before writing this, not assumed
+    from the Anthropic-shaped code above.
+    """
+    if not settings.openrouter_api_key:
+        raise ExtractionError("OPENROUTER_API_KEY is not configured.")
+
+    data = _read_file_bytes(file_path)
+    b64 = base64.standard_b64encode(data).decode("utf-8")
+
+    request_body = {
+        "model": settings.openrouter_model,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Extract this document's structured data per the tool schema."},
+                    {
+                        "type": "file",
+                        "file": {
+                            "filename": os.path.basename(file_path),
+                            "file_data": f"data:application/pdf;base64,{b64}",
+                        },
+                    },
+                ],
+            },
+        ],
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": EXTRACTION_TOOL["name"],
+                    "description": EXTRACTION_TOOL["description"],
+                    "parameters": EXTRACTION_SCHEMA,
+                },
+            }
+        ],
+        "tool_choice": {"type": "function", "function": {"name": EXTRACTION_TOOL["name"]}},
+    }
+
+    headers = {"Authorization": f"Bearer {settings.openrouter_api_key}"}
+    if settings.openrouter_site_url:
+        headers["HTTP-Referer"] = settings.openrouter_site_url
+    if settings.openrouter_app_name:
+        headers["X-Title"] = settings.openrouter_app_name
+
+    try:
+        resp = httpx.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            json=request_body,
+            headers=headers,
+            timeout=settings.openrouter_timeout_seconds,
+        )
+        resp.raise_for_status()
+    except httpx.ConnectError as e:
+        raise ExtractionError("Could not reach OpenRouter (openrouter.ai) — check network connectivity.") from e
+    except httpx.HTTPStatusError as e:
+        # OpenRouter uses the same "credit balance too low" style 4xx as Anthropic direct -
+        # surface the body, since it usually names the exact problem (auth vs. credits vs.
+        # a model slug that doesn't exist).
+        raise ExtractionError(f"OpenRouter API error ({e.response.status_code}): {e.response.text}") from e
+    except httpx.HTTPError as e:
+        raise ExtractionError(f"OpenRouter request failed: {e}") from e
+
+    body = resp.json()
+    choices = body.get("choices") or []
+    if not choices:
+        raise ExtractionError(f"OpenRouter returned no choices: {body}")
+
+    tool_calls = (choices[0].get("message") or {}).get("tool_calls") or []
+    if not tool_calls:
+        raise ExtractionError("Model did not return a tool call (may not support forced tool use via OpenRouter).")
+
+    arguments = tool_calls[0].get("function", {}).get("arguments")
+    if not arguments:
+        raise ExtractionError("OpenRouter tool call had no arguments.")
+
+    try:
+        return json.loads(arguments)
+    except json.JSONDecodeError as e:
+        raise ExtractionError(f"OpenRouter tool call arguments were not valid JSON: {e}") from e
 
 
 def _normalize(payload: dict) -> ExtractionResult:

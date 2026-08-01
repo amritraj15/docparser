@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     upload_dir: str = "./uploads"
 
     # LLM
-    llm_provider: str = "anthropic"  # "anthropic" | "ollama"
+    llm_provider: str = "anthropic"  # "anthropic" | "ollama" | "openrouter"
     anthropic_api_key: str = ""
     extraction_model: str = "claude-sonnet-4-6"
 
@@ -16,6 +16,16 @@ class Settings(BaseSettings):
     ollama_model: str = "llama3.2-vision"
     ollama_max_pages: int = 5  # cap pages rendered to images per document, to bound context/latency
     ollama_timeout_seconds: float = 120.0
+
+    # OpenRouter — used when llm_provider == "openrouter". A cloud aggregator (like
+    # Anthropic direct), not a privacy-preserving option - do not use for the repo-
+    # suggestion embedding path (that stays hard-locked to local Ollama regardless).
+    openrouter_api_key: str = ""
+    openrouter_model: str = "anthropic/claude-sonnet-4.6"  # verify current slug at
+                                                             # openrouter.ai/models - these drift
+    openrouter_site_url: str = ""   # optional, sent as HTTP-Referer for openrouter.ai rankings
+    openrouter_app_name: str = "docparser"  # optional, sent as X-Title
+    openrouter_timeout_seconds: float = 120.0
 
     # Pipeline behavior
     review_confidence_threshold: float = 0.75  # fields below this go to the review queue

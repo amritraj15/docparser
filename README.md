@@ -109,6 +109,73 @@ is unaffected by which one you're using.
 - No cost, no network dependency, and circulars never leave your machine — the right
   tradeoff if that matters more than accuracy for your use case.
 
+### Running via OpenRouter (one key, many models — still a cloud provider)
+
+`LLM_PROVIDER=openrouter` routes classification through [OpenRouter](https://openrouter.ai)
+instead of Claude direct or local Ollama — useful if you already have OpenRouter credits,
+want to try a different model behind the same key, or hit a credit wall on direct Anthropic
+billing (as happened earlier in this project).
+
+```bash
+# .env
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=sk-or-...          # from openrouter.ai/keys
+OPENROUTER_MODEL=anthropic/claude-sonnet-4.6   # verify the current slug at openrouter.ai/models
+```
+
+**Worth knowing — this is a different API shape under the hood, not just a different key.**
+OpenRouter's primary interface is OpenAI-compatible chat completions, even when the model
+you route to is Claude. That means PDFs go in as an OpenAI-style `file` content block
+(verified against OpenRouter's current docs), and forced tool selection uses OpenAI's
+`tools`/`tool_choice` function-calling shape — not Anthropic's native `document` blocks or
+`tool_choice: {"type": "tool", ...}`. Both are implemented and tested
+(`tests/test_openrouter_extraction.py`) as their own code path, not assumed to work by
+just swapping the API key into the Anthropic SDK — that combination isn't guaranteed to
+handle PDFs or forced schemas correctly and wasn't the approach taken here.
+
+**This is a cloud provider, same as Anthropic direct — not a privacy option.** Your circular
+PDFs go to OpenRouter and whichever backing provider it routes to. It's picked for
+cost/model flexibility, not confidentiality; if that's what you need, use the Ollama path
+above instead.
+
+### Running against a local Supabase Postgres (persistent local history)
+
+By default, local dev uses a SQLite file (`docparser.db`) — fine day to day, but if you'd
+rather develop against real Postgres (matching the deployed Neon setup, or just because you
+already use Supabase and want its Studio UI to browse upload history), point `DATABASE_URL`
+at a local Supabase instance. **No code change needed for this** — `DATABASE_URL` has been
+Postgres-agnostic since decision #19; this is purely a local provisioning choice.
+
+```bash
+# one-time setup, if you don't have the CLI yet
+brew install supabase/tap/supabase   # or see supabase.com/docs/guides/local-development
+
+supabase init      # creates supabase/config.toml in this repo (gitignored by default)
+supabase start     # spins up local Postgres + Studio via Docker
+```
+
+That prints a `DB URL` — by default:
+```
+postgresql://postgres:postgres@localhost:54322/postgres
+```
+Put that in `.env` as `DATABASE_URL`, then run the app normally. Browse the actual
+`documents`/`extracted_fields`/`review_items` tables (and upload history over time, across
+however many local sessions) at the Studio URL it also prints — `http://localhost:54323`
+by default.
+
+**`supabase start` runs the *full* local stack by default** (Postgres, auth, storage,
+realtime, Studio, ~7GB RAM recommended) — the same bundled-features-you-don't-need concern
+that ruled Supabase out for the *deployed* instance in decision #19 applies here too, just
+less critically since it's local and disposable. If you only want Postgres + Studio:
+```bash
+supabase start -x gotrue,storage-api,realtime,imgproxy,edge-runtime
+```
+
+Data persists across `supabase stop`/`supabase start` cycles (unlike SQLite on Render's
+free tier — this is exactly what avoids the "history disappears" problem from earlier,
+just for local dev rather than the deployed instance). Run `supabase db reset` if you
+deliberately want a clean slate.
+
 ### Run the tests
 
 ```bash
@@ -213,22 +280,32 @@ that touches multiple unrelated files at once.
 `render.yaml` in the repo root is a one-click Infrastructure-as-Code config for Render.
 
 1. Push this repo to GitHub (already done: github.com/amritraj15/docparser).
-2. On [render.com](https://render.com), New → Blueprint → connect the GitHub repo. Render
+2. Create a free Postgres database on [Neon](https://neon.tech) and copy its connection
+   string (it already includes `sslmode=require`).
+3. On [render.com](https://render.com), New → Blueprint → connect the GitHub repo. Render
    reads `render.yaml` automatically and provisions the web service.
-3. Set `ANTHROPIC_API_KEY` in the Render dashboard (Environment tab) — it's deliberately
-   left unset in `render.yaml` (`sync: false`) so a real key never gets committed.
-4. Deploy. First build takes a few minutes; you'll get a `https://docparser-xxxx.onrender.com`
+4. In the Render dashboard's Environment tab, set:
+   - `ANTHROPIC_API_KEY` — deliberately left unset in `render.yaml` (`sync: false`) so a
+     real key never gets committed.
+   - `DATABASE_URL` — your Neon connection string. Also left unset in `render.yaml` on
+     purpose (see the note below on why SQLite's default isn't safe here).
+5. Deploy. First build takes a few minutes; you'll get a `https://docparser-xxxx.onrender.com`
    URL.
 
 **Two real limitations of the free tier, not swept under the rug:**
 - **Cold start.** The free instance sleeps after 15 minutes idle; the first request after
   that takes 30–50 seconds to wake it. Not a bug — hit it once before sharing the link if
   that matters for a first impression.
-- **Ephemeral disk.** SQLite (`docparser.db`) and uploaded PDFs live on local disk, which
-  Render's free tier does **not** persist across redeploys or restarts. Fine for a demo/
-  grading window; for anything longer-lived, point `DATABASE_URL` at Render's free managed
-  Postgres instead (note: that free Postgres instance itself expires after a period of
-  inactivity too — check current Render docs before relying on it past a short window).
+- **Ephemeral disk — this is why `DATABASE_URL` must point at Postgres, not the SQLite
+  default.** Render's free-tier filesystem is wiped on *every* restart/redeploy/spin-down,
+  not just occasionally — since the free instance spins down after 15 minutes idle, this
+  can happen several times a day, not just between deploys. Left on the SQLite default,
+  the deployed instance silently loses all uploaded documents and classifications on a
+  regular basis; it isn't a rare edge case. `DATABASE_URL` set to Neon fixes this — see
+  decisions.md #19 for why Neon over Render's own free Postgres (which itself expires
+  30 days after creation) or Supabase (bundles auth/storage this project doesn't use).
+  Uploaded PDF *files* themselves still live on local disk either way and are still lost
+  on restart — only the database-backed classification data persists with this fix.
 
 `REPO_SUGGESTION_ENABLED` stays `false` in the deployed config on purpose — see the
 security note above and decisions.md #11. That feature is for local use against a real
