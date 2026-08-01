@@ -1,10 +1,14 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 
 from app.database import init_db
 from app.routers import documents, review, query, reference, repo_index
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 
 @asynccontextmanager
@@ -40,3 +44,14 @@ app.include_router(repo_index.router)
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/", response_class=HTMLResponse)
+def serve_ui():
+    """
+    Serves the review-queue UI. Single self-contained HTML file (app/static/index.html) -
+    no build step, no separate frontend deploy, works at whatever URL the API itself is
+    deployed to. Fetches are same-origin, so CORS being wide-open above doesn't matter
+    for this page specifically.
+    """
+    return (STATIC_DIR / "index.html").read_text()
