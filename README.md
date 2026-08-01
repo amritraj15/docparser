@@ -32,6 +32,10 @@ new validation rule — and those are exactly the ones easy to miss buried in ro
 4. Once classified, circulars are **searchable**: by segment, by whether they're
    system-impacting, by impact area, by effective date, or by freeform text.
 
+A review-queue UI is served at the app's root URL (`/`) — upload a circular, watch it get
+classified, and confirm/correct anything that landed in review, all from the browser. The
+API endpoints below still work standalone if you'd rather script against them.
+
 The core bet: classification is never all-or-nothing. If the model is confident this is a
 mutual-fund circular but unsure whether it's backend or frontend, that's the one thing that
 should reach a human — not a demand to re-verify the whole classification from scratch.
@@ -230,6 +234,22 @@ that touches multiple unrelated files at once.
 security note above and decisions.md #11. That feature is for local use against a real
 codebase, never the public demo instance.
 
+### Testing the deployment
+
+`scripts/smoke_test.sh` runs the checks below against a live URL — free ones first,
+the one that spends a real LLM call last, and only if you ask for it:
+
+```bash
+# free checks only: liveness, docs, reference data, security posture, validation paths
+./scripts/smoke_test.sh https://docparser-xxxx.onrender.com
+
+# same, plus a real end-to-end upload -> classify -> query (spends one LLM call)
+./scripts/smoke_test.sh https://docparser-xxxx.onrender.com ./your_circular.pdf
+```
+
+Exits non-zero if anything fails, so it's usable as a post-deploy gate, not just a manual
+check.
+
 ## Architecture
 
 ```
@@ -283,5 +303,7 @@ See `decisions.md` (decisions 10-11 especially) for the full reasoning:
 - **No confidence calibration against historical outcomes.** The 0.75 classification
   threshold and the 0.35 retrieval-similarity threshold are reasonable priors, not tuned
   against labeled historical data — there wasn't one available to tune against.
-- **No UI.** This is an API. The review queue — the one place a human actually has to act —
-  is the highest-value place to add one next.
+- **No auth on the UI or API.** Same accepted-for-demo call as the API itself (decisions.md
+  #13) — the UI inherits it automatically since it's served by the same app.
+- **No real-time queue updates.** The UI refreshes after an action or a manual reload, not
+  via websocket/SSE — fine at demo scale, a real gap at multi-user scale.

@@ -480,3 +480,112 @@ only shows up at actual deploy time, not in local dev (this sandbox's Python ver
 happened to already have wheels available) or in the test suite (which never touches a
 build/install step). Recorded here rather than just fixed silently, because "local tests
 green" and "deployable" turned out to be different claims.
+
+---
+
+## 16. Post-deploy smoke test: cost-ordered, not just present/absent
+
+**Decision:** Add `scripts/smoke_test.sh` — a single script that checks a live deployment,
+ordered from free to costly, with the LLM-spending end-to-end check opt-in via a second
+argument rather than always running.
+
+**Alternatives considered:** A pytest-based integration suite that hits the live URL
+instead of a shell script; always running the full end-to-end check.
+
+**Reasoning:** Always running the real upload→classify check would spend an API call every
+time someone just wants to confirm the instance is awake — the wrong default for something
+likely to be re-run casually after every deploy. Ordering checks free-to-costly and gating
+the costly one behind an explicit PDF argument means "is it up" and "does classification
+actually work" are two different, deliberately separable questions. A pytest suite was
+rejected mainly for portability — this needs to run from anyone's shell against a URL with
+zero setup, not require the project's virtualenv/dependencies to be installed locally.
+
+**Verified, not just written:** tested against a locally running instance in this session —
+once confirming all 8 free checks pass against the real app, and once with a real PDF
+upload against an instance with no API key configured, to confirm the polling/failure-
+detection logic surfaces the actual error (`ANTHROPIC_API_KEY is not configured`) instead of
+hanging or crashing on unexpected JSON shape.
+
+**What was cut:** No CI wiring (e.g. a GitHub Action that runs this automatically after
+every deploy) — this is a manual, on-demand check for a single-instance demo, not a
+pipeline. A reasonable next step if this project outlives the grading window.
+
+---
+
+## 17. Review-queue UI: single static HTML file, served by the API itself
+
+**Decision:** Build the review-queue UI as one self-contained HTML file
+(`app/static/index.html`, vanilla JS, no build step, no framework) served directly by
+FastAPI at `/`, rather than a separate frontend project/deploy.
+
+**Alternatives considered:** A React/Vite app deployed separately (e.g. Vercel, per the
+earlier discussion of why Vercel doesn't fit the *backend*); a server-rendered template
+(Jinja2) instead of a client-side fetch-driven page.
+
+**Reasoning:** This is the highest-leverage gap flagged in `00-review-20260727.md`
+(Business Admin lens) — the review queue was the one place a human actually had to
+interact with the system, and it was curl-only. A separate frontend deploy doubles the
+number of moving parts (two repos or two deploy targets, a CORS story to get right, a
+second thing that can be down) for a UI whose entire job is calling five existing JSON
+endpoints. Serving one static file from the same FastAPI app means the existing Render
+deploy *is* the UI deploy — no new infra decision needed at all. A Jinja2/server-rendered
+approach was rejected because the confirm/correct/upload interactions are genuinely
+client-side (optimistic-feeling removal from the queue, drag-and-drop, polling a
+processing document) and fighting a template engine for that isn't simpler than fetch().
+
+**Design intent, not incidental:** the subject is an internal, compliance-adjacent tool for
+an engineer clearing a queue — not a marketing surface — so the visual language is a
+ledger/register (hairline dividers, mono data columns, a stamp motif on confirm/correct)
+rather than a generic cards-and-shadows dashboard. The stamp is the signature element:
+circulars are literally paper notices that get stamped in a real review process, so it's
+earned by the subject rather than decorative.
+
+**Verified, not just written:** ran a live server (extraction mocked, since this sandbox
+has no real Anthropic key) and drove the actual HTTP calls the JS makes — upload, the
+document-detail shape the field list renders from, the review-queue shape the entry
+cards render from, both `confirm` and `correct` resolutions (confirmed `original_value`
+is preserved and `current_value`/confidence update correctly on correction), and the
+415/400 validation paths the dropzone's error handling depends on. All field names in the
+JS were checked against real API responses, not assumed. A regression test
+(`tests/test_ui.py`) confirms the route serves and references the right API paths, so this
+stays covered by the normal test suite going forward, not just this session's manual check.
+
+**What was cut:** No authentication on this page either — same accepted-for-demo call as
+decision #13, inherited automatically since it's served by the same unauthenticated app.
+No real-time updates (the queue only refreshes after an action or a manual reload — no
+websocket/SSE); acceptable at demo scale, a real next step if this sees actual multi-user
+use. No pagination on the review queue or document list — fine at demo volume, a genuine
+gap at real volume.
+
+---
+
+## 18. Completed the plan-workflow skill install: AGENTS.md, review template, worked example
+
+**Decision:** Author the three pieces flagged as missing back in decision #12 —
+`AGENTS.md` (bootstrapped via real discovery of this repo, not guessed), `templates/
+review.md` for `plan-review` (extracted from the actual structure `00-review-20260727.md`
+already used, not invented fresh), and a worked example (`examples/user-deactivation/`)
+demonstrating the parts of `plan-workflow` this project's own build never exercised.
+
+**Why `user-deactivation` and not a docparser feature as the worked example:** this
+project was single-agent and serial throughout (correctly — see decisions.md #10's
+Engineering Manager finding, confirmed N/A), so its own Phase 1/2/3 docs never had to
+demonstrate the interface-first execution pattern, a choke-point table, or per-agent
+sections in a todo tracker under real parallel writes. A worked example that only shows
+what this project already did would teach half the methodology. User deactivation is
+small, realistic, and naturally has a genuine choke point (a migration + an auth
+middleware check that every other piece of the feature depends on) — reused directly from
+`plan-workflow`'s own SKILL.md wording as the archetypal parallel-then-wire case.
+
+**`AGENTS.md`, discovered not guessed:** walked the actual repo (`find`, `cat
+requirements.txt`, `cat .python-version`) rather than writing a plausible-sounding generic
+doc. Findings worth flagging here because they're the kind of thing that's easy to miss on
+a casual read: no lint/format tool is configured anywhere in the repo (a real gap, noted
+plainly rather than papered over), and there is genuinely no migration tool — `AGENTS.md`
+names the exact place this bit the project once already (`ReviewItem.original_value`,
+decisions.md #12) so it isn't rediscovered the same way twice.
+
+**What's still not done:** per `plan-workflow`'s own Step 0 instructions, a newly
+bootstrapped `AGENTS.md` gets a lightweight human review before being trusted — "show a
+short summary, ask what's wrong or missing." That review hasn't happened yet; this decision
+entry is the build, not the sign-off.
