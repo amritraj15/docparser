@@ -95,7 +95,7 @@ def test_embed_texts_raises_clear_error_on_connection_refused(monkeypatch):
         _embed_texts(["some code"])
 
 
-def test_embed_texts_raises_on_missing_embedding_field(monkeypatch):
+def test_embed_texts_raises_on_missing_embeddings_field(monkeypatch):
     class FakeResponse:
         def raise_for_status(self):
             pass
@@ -104,8 +104,73 @@ def test_embed_texts_raises_on_missing_embedding_field(monkeypatch):
             return {}
 
     monkeypatch.setattr(ri.httpx, "post", lambda url, json, timeout: FakeResponse())
-    with pytest.raises(RepoIndexError, match="no embedding"):
+    with pytest.raises(RepoIndexError, match="is .* pulled"):
         _embed_texts(["some code"])
+
+
+def test_embed_texts_uses_current_api_embed_endpoint_not_deprecated_one(monkeypatch):
+    """Regression test: /api/embeddings (legacy) 404s on current Ollama - confirmed
+    directly against Ollama's own docs, not assumed. Must use /api/embed with `input`,
+    reading `embeddings` (plural) from the response, not `prompt`/`embedding`."""
+    captured = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"embeddings": [[1.0, 0.0], [0.0, 1.0]]}
+
+    def fake_post(url, json, timeout):
+        captured["url"] = url
+        captured["json"] = json
+        return FakeResponse()
+
+    monkeypatch.setattr(ri.httpx, "post", fake_post)
+    result = _embed_texts(["foo", "bar"])
+
+    assert captured["url"].endswith("/api/embed")
+    assert "/api/embeddings" not in captured["url"] or captured["url"].endswith("/api/embed")
+    assert captured["json"]["input"] == ["foo", "bar"]  # batch sent as one array, not one call per text
+    assert "prompt" not in captured["json"]
+    assert result == [[1.0, 0.0], [0.0, 1.0]]
+
+
+def test_embed_texts_batches_large_inputs(monkeypatch):
+    """More texts than _EMBED_BATCH_SIZE must split into multiple requests, not one
+    unbounded request."""
+    call_count = {"n": 0}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"embeddings": [[0.0]] * len(sent_batch[-1])}
+
+    sent_batch = []
+
+    def fake_post(url, json, timeout):
+        sent_batch.append(json["input"])
+        call_count["n"] += 1
+        return FakeResponse()
+
+    monkeypatch.setattr(ri.httpx, "post", fake_post)
+    monkeypatch.setattr(ri, "_EMBED_BATCH_SIZE", 3)
+
+    texts = [f"chunk {i}" for i in range(7)]
+    result = _embed_texts(texts)
+
+    assert call_count["n"] == 3  # 3 + 3 + 1
+    assert len(result) == 7
+
+
+def test_embed_texts_empty_input_returns_empty_without_a_request(monkeypatch):
+    def fake_post(*a, **kw):
+        raise AssertionError("should not be called for empty input")
+
+    monkeypatch.setattr(ri.httpx, "post", fake_post)
+    assert _embed_texts([]) == []
 
 
 # --- build_index + search, with a deterministic fake embedder --------------------

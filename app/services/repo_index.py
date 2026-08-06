@@ -168,16 +168,33 @@ def _chunk_file(root_path: str, file_path: str) -> list[Chunk]:
     return chunks
 
 
+_EMBED_BATCH_SIZE = 64  # cap per request - real batching via /api/embed's array input,
+                         # not one HTTP round-trip per chunk
+
+
 def _embed_texts(texts: list[str]) -> list[list[float]]:
-    """Local-only embedding via Ollama. Deliberately does not accept a provider argument —
-    see module docstring for why this is never routed through a cloud API."""
-    vectors = []
-    for text in texts:
+    """
+    Local-only embedding via Ollama. Deliberately does not accept a provider argument —
+    see module docstring for why this is never routed through a cloud API.
+
+    Uses /api/embed (current), not /api/embeddings (deprecated on current Ollama versions
+    and returns a bare 404 there — confirmed directly against Ollama's own docs, not
+    assumed). The two endpoints differ in more than the URL: /api/embed takes `input`
+    (accepts a batch array) and returns `embeddings` (plural); the old one took a single
+    `prompt` and returned `embedding` (singular). Real batching here also means indexing a
+    repo is one request per _EMBED_BATCH_SIZE chunks, not one request per chunk.
+    """
+    if not texts:
+        return []
+
+    vectors: list[list[float]] = []
+    for i in range(0, len(texts), _EMBED_BATCH_SIZE):
+        batch = texts[i:i + _EMBED_BATCH_SIZE]
         try:
             resp = httpx.post(
-                f"{settings.ollama_host.rstrip('/')}/api/embeddings",
-                json={"model": settings.repo_embedding_model, "prompt": text},
-                timeout=60.0,
+                f"{settings.ollama_host.rstrip('/')}/api/embed",
+                json={"model": settings.repo_embedding_model, "input": batch},
+                timeout=120.0,
             )
             resp.raise_for_status()
         except httpx.ConnectError as e:
@@ -188,10 +205,14 @@ def _embed_texts(texts: list[str]) -> list[list[float]]:
             raise RepoIndexError(f"Ollama embedding request failed: {e}") from e
 
         body = resp.json()
-        vec = body.get("embedding")
-        if not vec:
-            raise RepoIndexError("Ollama returned no embedding vector.")
-        vectors.append(vec)
+        batch_vectors = body.get("embeddings")
+        if not batch_vectors or len(batch_vectors) != len(batch):
+            raise RepoIndexError(
+                f"Ollama returned {len(batch_vectors or [])} embedding(s) for {len(batch)} input(s) — "
+                f"is '{settings.repo_embedding_model}' pulled? (ollama pull {settings.repo_embedding_model})"
+            )
+        vectors.extend(batch_vectors)
+
     return vectors
 
 

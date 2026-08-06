@@ -6,3 +6,11 @@ def test_ui_served_at_root(client):
     # sanity-check the JS references the actual API paths it depends on
     assert "/review/queue" in resp.text
     assert "/documents" in resp.text
+
+
+def test_ui_includes_change_suggestions_tab_and_its_api_paths(client):
+    resp = client.get("/")
+    assert "Change Suggestions" in resp.text
+    assert "/change-suggestions" in resp.text
+    assert "/jira-ticket" in resp.text
+    assert "/jira-key" in resp.text

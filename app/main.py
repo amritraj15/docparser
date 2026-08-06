@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
 from app.database import init_db
-from app.routers import documents, review, query, reference, repo_index
+from app.routers import documents, review, query, reference, repo_index, change_suggestions
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -39,6 +39,7 @@ app.include_router(review.router)
 app.include_router(query.router)
 app.include_router(reference.router)
 app.include_router(repo_index.router)
+app.include_router(change_suggestions.router)
 
 
 @app.get("/health")

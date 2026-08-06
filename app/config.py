@@ -21,14 +21,14 @@ class Settings(BaseSettings):
     # Anthropic direct), not a privacy-preserving option - do not use for the repo-
     # suggestion embedding path (that stays hard-locked to local Ollama regardless).
     openrouter_api_key: str = ""
-    openrouter_model: str = "openrouter/free"  # OpenRouter's free auto-router - filters
-                            # candidates by required capabilities (incl. tool calling)
-                            # instead of pinning one specific free model, which is prone
-                            # to sudden delisting. Real risk either way: free-tier tool
-                            # calling has a documented failure mode ("No endpoints found
-                            # that support tool use"). See decisions.md #20 addendum 3.
-                            # Pin a paid model (e.g. "anthropic/claude-sonnet-4.6") for
-                            # anything beyond experimentation.
+    openrouter_model: str = "tencent/hy3:free"  # free, and explicitly documented by
+                            # OpenRouter as having stable tool-calling - checked directly
+                            # against openrouter.ai/collections/tool-calling-models, where
+                            # it ranks #1 by usage among free tool-calling models. Not yet
+                            # tested with a real call against THIS pipeline's exact PDF +
+                            # forced-tool-choice shape. See decisions.md #20 addendum 4.
+                            # Fall back to "openrouter/free" (auto-router) or a paid model
+                            # (e.g. "anthropic/claude-sonnet-4.6") if this stops working.
     openrouter_site_url: str = ""   # optional, sent as HTTP-Referer for openrouter.ai rankings
     openrouter_app_name: str = "docparser"  # optional, sent as X-Title
     openrouter_timeout_seconds: float = 120.0

@@ -28,6 +28,13 @@ class ReviewStatus(str, enum.Enum):
     CORRECTED = "corrected"
 
 
+class ChangeSuggestionStatus(str, enum.Enum):
+    PENDING = "pending"            # not yet reviewed by a PM/lead
+    APPROVED = "approved"          # PM+lead agree this needs a JIRA task
+    NEEDS_DISCUSSION = "needs_discussion"  # flagged for a sync conversation, not resolved inline
+    REJECTED = "rejected"          # reviewed and decided no action needed
+
+
 class Document(Base):
     __tablename__ = "documents"
 
@@ -85,3 +92,33 @@ class ReviewItem(Base):
     reviewer_note = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     resolved_at = Column(DateTime, nullable=True)
+
+
+class ChangeSuggestion(Base):
+    """
+    A persisted result from the local repo-suggestion search (app/services/repo_index.py),
+    one row per (document, target repo). Persisted rather than purely ephemeral so a PM and
+    a lead can come back to the same suggestion, discuss it, and record a decision — the
+    whole point of the review workflow this table exists for (see decisions.md #22).
+
+    Only meaningful when REPO_SUGGESTION_ENABLED=true and run locally against a real repo —
+    see decisions.md #11 for why that's local-only by design.
+    """
+    __tablename__ = "change_suggestions"
+
+    id = Column(String, primary_key=True, default=gen_id)
+    document_id = Column(String, ForeignKey("documents.id"), nullable=False)
+    target = Column(String, nullable=False)   # "backend" | "frontend"
+    matched = Column(Integer, default=0)       # 1 if the search cleared the similarity threshold
+    reason = Column(Text, nullable=True)       # why no match, when matched=0
+    candidates = Column(JSON, nullable=True)   # list of {path, start_line, end_line, file_tag, score, snippet}
+
+    status = Column(Enum(ChangeSuggestionStatus), default=ChangeSuggestionStatus.PENDING, nullable=False)
+    reviewer_name = Column(String, nullable=True)   # free text — no auth/user system exists (decisions.md #13)
+    reviewer_note = Column(Text, nullable=True)
+    jira_ticket_key = Column(String, nullable=True)  # e.g. "KUV-1234", filled in after manual creation in real JIRA
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    document = relationship("Document")

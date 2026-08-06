@@ -46,8 +46,8 @@ relies on it.
 ## Layering convention
 
 - Transport / API layer: `app/routers/*.py` — one router module per concern
-  (`documents.py`, `review.py`, `query.py`, `reference.py`, `repo_index.py`), registered in
-  `app/main.py`.
+  (`documents.py`, `review.py`, `query.py`, `reference.py`, `repo_index.py`,
+  `change_suggestions.py`), registered in `app/main.py`.
 - Domain / business logic + orchestration: `app/services/*.py` —
   `extraction.py` (LLM integration: schema, prompt, both providers, response
   normalization), `pipeline.py` (upload → classify → persist → review-routing

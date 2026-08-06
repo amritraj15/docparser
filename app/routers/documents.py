@@ -5,8 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db, SessionLocal
-from app.models import Document, DocumentStatus
-from app.schemas import DocumentOut, DocumentDetailOut
+from app.models import Document, DocumentStatus, ChangeSuggestion, ChangeSuggestionStatus
+from app.schemas import DocumentOut, DocumentDetailOut, ChangeSuggestionOut
 from app.services.pipeline import save_upload, process_document
 from app.services.repo_index import search as repo_search, RepoIndexError
 
@@ -98,12 +98,19 @@ def _field_value(doc: Document, name: str) -> Optional[str]:
     return None
 
 
-@router.post("/{document_id}/suggest-changes")
+@router.post("/{document_id}/suggest-changes", response_model=List[ChangeSuggestionOut])
 def suggest_changes(document_id: str, db: Session = Depends(get_db)):
     """
     For a system-impacting circular, retrieves candidate code locations from a local,
-    pre-indexed codebase (see /repo-index). Disabled unless REPO_SUGGESTION_ENABLED=true —
-    see repo_index.py for why this stays off by default and never touches a cloud API.
+    pre-indexed codebase (see /repo-index) and PERSISTS the result as ChangeSuggestion
+    row(s) — one per target repo — so a PM/lead can review it later via /change-suggestions,
+    not just see it once in this response. Re-running this while a suggestion is still
+    `pending` refreshes it (the repo may have been re-indexed); once a PM has moved it past
+    pending (approved/rejected/needs_discussion), re-running does NOT silently overwrite
+    their decision — that would erase a real review outcome.
+
+    Disabled unless REPO_SUGGESTION_ENABLED=true — see repo_index.py for why this stays off
+    by default and never touches a cloud API.
     """
     if not settings.repo_suggestion_enabled:
         raise HTTPException(
@@ -136,11 +143,33 @@ def suggest_changes(document_id: str, db: Session = Depends(get_db)):
     if not query_text.strip():
         raise HTTPException(status_code=400, detail="Document has no summary or key points to search with.")
 
-    results = {}
+    out = []
     for target in targets:
-        try:
-            results[target] = repo_search(target, query_text)
-        except RepoIndexError as e:
-            results[target] = {"matched": False, "reason": str(e), "candidates": []}
+        existing = (
+            db.query(ChangeSuggestion)
+            .filter(ChangeSuggestion.document_id == document_id, ChangeSuggestion.target == target)
+            .first()
+        )
+        if existing is not None and existing.status != ChangeSuggestionStatus.PENDING:
+            # Already reviewed - don't silently overwrite a PM/lead's decision.
+            out.append(existing)
+            continue
 
-    return {"document_id": document_id, "query": query_text, "results": results}
+        try:
+            result = repo_search(target, query_text)
+        except RepoIndexError as e:
+            result = {"matched": False, "reason": str(e), "candidates": []}
+
+        if existing is None:
+            existing = ChangeSuggestion(document_id=document_id, target=target)
+            db.add(existing)
+        existing.matched = 1 if result["matched"] else 0
+        existing.reason = result.get("reason")
+        existing.candidates = result.get("candidates") or []
+        db.flush()
+        out.append(existing)
+
+    db.commit()
+    for s in out:
+        db.refresh(s)
+    return out

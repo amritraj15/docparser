@@ -154,10 +154,14 @@ SYSTEM_PROMPT = (
     "marked system_impacting=false with high confidence — do not over-flag. When a circular does "
     "describe a concrete operational change (new field, new file/message format, a changed "
     "cutoff time, a new validation rule, a new API or process step), mark it system_impacting=true "
-    "and extract the specific clauses into key_points so an engineer can jump straight to what "
-    "matters instead of re-reading the whole PDF. Never guess a value you are not reasonably "
-    "confident about without lowering its confidence score accordingly — a low-confidence "
-    "correct-shaped answer is far more useful downstream than a confident wrong one."
+    "and extract the specific clauses into key_points — each key_point's value must be a plain "
+    "English sentence describing the clause, never a JSON object, dict, or code-like structure — "
+    "so an engineer can jump straight to what matters instead of re-reading the whole PDF. Never "
+    "guess a value you are not reasonably confident about without lowering its confidence score "
+    "accordingly — a low-confidence correct-shaped answer is far more useful downstream than a "
+    "confident wrong one. Every field in the schema must be present in your response, even when "
+    "you are unsure — set value to null and confidence low rather than omitting the field "
+    "entirely; an omitted field is indistinguishable from a bug and cannot be reviewed."
 )
 
 
@@ -465,6 +469,18 @@ def _normalize(payload: dict) -> ExtractionResult:
     for name in scalar_field_names:
         entry = payload.get(name)
         if entry is None:
+            # The model omitted this field entirely (not "null with low confidence" -
+            # genuinely absent from its response). Treat that as a low-confidence result
+            # rather than silently dropping it — an omitted field is otherwise
+            # indistinguishable from success and never reaches the review queue, which is
+            # exactly what let a badly-malformed classification show status=complete with
+            # no red flags. See decisions.md #24.
+            fields.append(ExtractedFieldResult(
+                field_name=name,
+                value=None,
+                confidence=0.0,
+                source_note="Field was not present in the model's response.",
+            ))
             continue
         fields.append(ExtractedFieldResult(
             field_name=name,

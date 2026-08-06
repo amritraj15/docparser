@@ -120,21 +120,30 @@ billing (as happened earlier in this project).
 # .env
 LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=sk-or-...          # from openrouter.ai/keys
-OPENROUTER_MODEL=openrouter/free       # free auto-router - see the risk note below
+OPENROUTER_MODEL=nvidia/nemotron-3-ultra-550b-a55b:free   # free, actually verified - see below
 ```
 
-**Using the free tier — read this before relying on it.** `openrouter/free` auto-routes to
-whichever currently-available free model supports what the request needs (including tool
-calling), rather than pinning one specific free model — free-tier listings change fast
-(one tracker showed seven free endpoints delisted in a nine-day span), so hardcoding a
-specific `:free` model ID is likely to break on its own timeline, not yours. That said,
-**OpenRouter's free tier has a documented tool-calling failure mode**:
-`"No endpoints found that support tool use"`. This project's entire extraction pipeline
-depends on forced tool-calling, so if you see that error (or extraction just keeps
-failing), it means no free model matching that requirement was available at that moment —
-retry, or switch to a pinned paid model:
+**Using the free tier.** `nvidia/nemotron-3-ultra-550b-a55b:free` is the first free model
+**actually verified end-to-end** against this pipeline — a real BSE circular was
+successfully classified with it via the deployed instance, correctly producing
+high-confidence structured fields (`circular_number`, `circular_date` at 99%) and, notably,
+a well-reasoned *low*-confidence `effective_date` (30%) that explained *why* it couldn't
+answer confidently — citing the specific earlier notice the real answer likely lives in —
+instead of guessing. That's the confidence-gating design working exactly as intended, on a
+free model, in production. Not every free model gets this far: earlier candidates
+(`tencent/hy3:free`, `openrouter/free`'s auto-router) were picked from OpenRouter's own
+documentation as *likely* to support this pipeline's forced-tool-calling + PDF-file-block
+request shape, but were never confirmed by a real call the way this one now has been.
+
+Free-tier listings on OpenRouter still change fast (one tracker showed seven free
+endpoints delisted in a nine-day span), and **OpenRouter's free tier has a documented
+tool-calling failure mode**: `"No endpoints found that support tool use."` If extraction
+starts failing with that error, or this model gets delisted, fallbacks in order of
+decreasing confidence:
 ```bash
-OPENROUTER_MODEL=anthropic/claude-sonnet-4.6   # confirmed working, see decisions.md #20
+OPENROUTER_MODEL=tencent/hy3:free                    # well-evidenced, not live-tested
+OPENROUTER_MODEL=openrouter/free                     # auto-router, filters by capability
+OPENROUTER_MODEL=anthropic/claude-sonnet-4.6         # paid, already confirmed working
 ```
 Free tier also carries request-rate limits (commonly 20/minute, 50–200/day depending on
 account credit history) — fine for trying this out, not something to build a real workflow
@@ -291,6 +300,33 @@ missing feature. See `decisions.md` (decision 11) for the reasoning behind that,
 real limitations: fixed-line-window chunking (no per-language parsing), no file-watcher
 (re-run `/repo-index/build` manually after real changes), and no handling for a circular
 that touches multiple unrelated files at once.
+
+### PM/lead review workflow, ending in a JIRA ticket draft
+
+The **"Change Suggestions"** tab in the UI turns a repo-suggestion result into something a
+PM and a lead can actually review together and act on — this was one of the original goals
+for this feature, not an afterthought bolted on.
+
+**How it works:**
+1. For a `system_impacting` document, `POST /documents/{id}/suggest-changes` now
+   **persists** the result (previously it was a one-shot response that vanished) — so it's
+   still there when a PM comes back to it.
+2. Open the **Change Suggestions** tab: each suggestion shows the source circular's
+   context, the suggested code location(s) with a similarity score, and three actions —
+   **Approve**, **Needs discussion**, **Reject** — plus an optional note.
+3. Re-running the search (e.g. after re-indexing the repo) **never overwrites a decision
+   that's already been made** — only `pending` suggestions get refreshed.
+4. **Generate JIRA ticket** produces a formatted title + Markdown description — the source
+   circular, why it needs a change, the suggested file(s), and any reviewer note — ready to
+   copy directly into JIRA. After creating the real ticket, paste its key (e.g. `KUV-1234`)
+   back in to keep the review traceable to the actual tracked work.
+
+**This is a copy-paste draft generator, not a live JIRA API integration** — deliberately.
+A real integration needs actual JIRA credentials this project has never had access to, and
+shipping an untested third-party API integration is exactly the mistake already made once
+with an OpenRouter model alias that looked right on paper and failed on the first real
+call (decisions.md #20, addendum 2). The draft generator is fully built and tested; live
+JIRA API creation is the natural next step if real credentials become available.
 
 ## Deploying (Render, free tier)
 

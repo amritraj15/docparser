@@ -383,6 +383,175 @@
     margin-bottom: 10px;
   }
 
+  /* ---------- Change Suggestions view ---------- */
+  .status-filter {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .status-filter button {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 6px 12px;
+    border-radius: 3px;
+    border: 1px solid var(--hairline);
+    background: transparent;
+    color: var(--paper-dim);
+    cursor: pointer;
+  }
+  .status-filter button.active { color: var(--brass); border-color: var(--brass); }
+  .reviewer-name-input {
+    margin-left: auto;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    background: var(--slate);
+    border: 1px solid var(--hairline);
+    color: var(--paper);
+    padding: 6px 10px;
+    border-radius: 3px;
+    width: 160px;
+  }
+
+  .suggestion-card {
+    border: 1px solid var(--hairline);
+    border-radius: 6px;
+    padding: 18px 20px;
+    margin-bottom: 16px;
+    background: var(--slate);
+  }
+  .suggestion-card .top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 10px;
+  }
+  .suggestion-card .context {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--paper-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .suggestion-card .summary {
+    font-family: 'Source Serif 4', serif;
+    font-size: 16px;
+    margin-top: 6px;
+    line-height: 1.4;
+  }
+  .status-badge {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 4px 10px;
+    border-radius: 3px;
+    border: 1px solid;
+    white-space: nowrap;
+  }
+  .status-badge.pending { color: var(--paper-dim); border-color: var(--hairline); }
+  .status-badge.approved { color: var(--sage); border-color: var(--sage); }
+  .status-badge.needs_discussion { color: var(--brass); border-color: var(--brass); }
+  .status-badge.rejected { color: var(--oxblood); border-color: var(--oxblood); }
+
+  .candidate-line {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    padding: 6px 0;
+    border-top: 1px solid var(--hairline);
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .candidate-line .snippet {
+    display: block;
+    color: var(--paper-dim);
+    font-size: 11px;
+    margin-top: 3px;
+    white-space: pre-wrap;
+  }
+
+  .suggestion-card .actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 14px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .suggestion-card .reviewed-by {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--paper-dim);
+    margin-top: 10px;
+  }
+  .suggestion-card textarea.note-input {
+    width: 100%;
+    margin-top: 10px;
+    background: var(--ink);
+    border: 1px solid var(--hairline);
+    color: var(--paper);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 13px;
+    padding: 8px 10px;
+    border-radius: 3px;
+    resize: vertical;
+  }
+
+  .jira-panel {
+    display: none;
+    margin-top: 14px;
+    padding: 16px;
+    background: var(--ink);
+    border: 1px solid var(--brass);
+    border-radius: 4px;
+  }
+  .jira-panel.open { display: block; }
+  .jira-panel .jira-title {
+    font-family: 'Source Serif 4', serif;
+    font-weight: 600;
+    font-size: 15px;
+    margin-bottom: 10px;
+  }
+  .jira-panel textarea.jira-body {
+    width: 100%;
+    min-height: 220px;
+    background: var(--slate);
+    border: 1px solid var(--hairline);
+    color: var(--paper);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    padding: 10px;
+    border-radius: 3px;
+  }
+  .jira-key-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    align-items: center;
+  }
+  .jira-key-row input {
+    background: var(--slate);
+    border: 1px solid var(--hairline);
+    color: var(--paper);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    padding: 6px 10px;
+    border-radius: 3px;
+    width: 140px;
+  }
+  .jira-key-badge {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--brass);
+    border: 1px solid var(--brass);
+    padding: 3px 8px;
+    border-radius: 3px;
+  }
+
   .toast {
     position: fixed;
     bottom: 24px; left: 50%;
@@ -428,11 +597,13 @@
 <nav class="tabs">
   <button class="active" data-tab="queue">Review Queue</button>
   <button data-tab="docs">Documents</button>
+  <button data-tab="suggestions">Change Suggestions</button>
 </nav>
 
 <main>
   <section id="view-queue"></section>
   <section id="view-docs" style="display:none"></section>
+  <section id="view-suggestions" style="display:none"></section>
 </main>
 
 <div class="toast" id="toast"></div>
@@ -747,6 +918,183 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+/* ---------------- Change Suggestions view (PM/lead review) ---------------- */
+let currentStatusFilter = 'all';
+
+function getReviewerName() {
+  return localStorage.getItem('docparser_reviewer_name') || '';
+}
+function setReviewerName(name) {
+  localStorage.setItem('docparser_reviewer_name', name);
+}
+
+async function renderSuggestions() {
+  const container = el('#view-suggestions');
+  container.innerHTML = `
+    <div class="status-filter" id="status-filter">
+      <button data-status="all" class="active">All</button>
+      <button data-status="pending">Pending</button>
+      <button data-status="approved">Approved</button>
+      <button data-status="needs_discussion">Needs discussion</button>
+      <button data-status="rejected">Rejected</button>
+      <input class="reviewer-name-input" id="reviewer-name" placeholder="Your name (for review notes)" value="${escapeHtml(getReviewerName())}">
+    </div>
+    <div id="suggestions-list"></div>`;
+
+  el('#reviewer-name').addEventListener('change', (e) => setReviewerName(e.target.value.trim()));
+  els('#status-filter button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      currentStatusFilter = btn.dataset.status;
+      els('#status-filter button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      loadSuggestionsList();
+    });
+  });
+
+  await loadSuggestionsList();
+}
+
+async function loadSuggestionsList() {
+  const listEl = el('#suggestions-list');
+  listEl.innerHTML = `<p class="mono" style="color:var(--paper-dim)">loading…</p>`;
+
+  const params = currentStatusFilter === 'all' ? {} : { status: currentStatusFilter };
+  let items;
+  try {
+    items = await api('/change-suggestions?' + new URLSearchParams(params).toString());
+  } catch (e) {
+    listEl.innerHTML = `<p class="mono" style="color:var(--oxblood)">Couldn't load: ${escapeHtml(e.message)}</p>`;
+    return;
+  }
+
+  if (items.length === 0) {
+    listEl.innerHTML = `
+      <div class="empty">
+        <p>No change suggestions ${currentStatusFilter === 'all' ? 'yet' : 'with this status'}.
+        This runs locally against a real codebase (REPO_SUGGESTION_ENABLED=true) — for a
+        system-impacting document, call <span class="mono">POST /documents/{id}/suggest-changes</span>
+        to generate one. See the README for the full local setup.</p>
+      </div>`;
+    return;
+  }
+
+  listEl.innerHTML = items.map(suggestionCardHtml).join('');
+  items.forEach(s => wireSuggestionCard(s));
+}
+
+function suggestionCardHtml(s) {
+  const context = `${escapeHtml(s.circular_number || s.document_filename || s.document_id.slice(0,8))} · ${escapeHtml(s.segment || '—')} · ${escapeHtml(s.target)} repo`;
+  const candidatesHtml = (s.candidates || []).slice(0, 3).map(c => `
+    <div class="candidate-line">
+      <span>${escapeHtml(c.path)} <span style="color:var(--paper-dim)">L${c.start_line}–${c.end_line} · ${(c.score*100).toFixed(0)}%</span></span>
+      <span class="snippet">${escapeHtml((c.snippet || '').slice(0, 160))}</span>
+    </div>`).join('');
+
+  return `
+    <div class="suggestion-card" data-id="${s.id}">
+      <div class="top">
+        <div>
+          <div class="context">${context}</div>
+          <div class="summary">${escapeHtml(s.summary || '(no summary)')}</div>
+        </div>
+        <span class="status-badge ${s.status}">${s.status.replace('_',' ')}</span>
+      </div>
+      ${candidatesHtml || `<p class="mono" style="color:var(--paper-dim); font-size:12px;">${escapeHtml(s.reason || 'No candidates.')}</p>`}
+      ${s.reviewer_name ? `<div class="reviewed-by">Reviewed by ${escapeHtml(s.reviewer_name)}${s.reviewer_note ? ': “' + escapeHtml(s.reviewer_note) + '”' : ''}</div>` : ''}
+      ${s.jira_ticket_key ? `<div style="margin-top:10px"><span class="jira-key-badge">${escapeHtml(s.jira_ticket_key)}</span></div>` : ''}
+      <div class="actions">
+        <button class="btn approve" style="border-color:var(--sage); color:var(--sage);">Approve</button>
+        <button class="btn discuss" style="border-color:var(--brass); color:var(--brass);">Needs discussion</button>
+        <button class="btn reject" style="border-color:var(--oxblood); color:var(--oxblood);">Reject</button>
+        <button class="btn jira">Generate JIRA ticket →</button>
+      </div>
+      <textarea class="note-input" placeholder="Reviewer note (optional, saved with your decision)" style="display:none"></textarea>
+      <div class="jira-panel" id="jira-${s.id}"></div>
+    </div>`;
+}
+
+function wireSuggestionCard(s) {
+  const card = document.querySelector(`.suggestion-card[data-id="${s.id}"]`);
+  if (!card) return;
+
+  const noteInput = el('.note-input', card);
+  el('.approve', card).addEventListener('click', () => { noteInput.style.display = 'block'; noteInput.focus(); noteInput.dataset.pendingStatus = 'approved'; });
+  el('.discuss', card).addEventListener('click', () => { noteInput.style.display = 'block'; noteInput.focus(); noteInput.dataset.pendingStatus = 'needs_discussion'; });
+  el('.reject', card).addEventListener('click', () => { noteInput.style.display = 'block'; noteInput.focus(); noteInput.dataset.pendingStatus = 'rejected'; });
+
+  noteInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submitReview(s.id, noteInput.dataset.pendingStatus, noteInput.value);
+  });
+  noteInput.addEventListener('blur', () => {
+    if (noteInput.dataset.pendingStatus) submitReview(s.id, noteInput.dataset.pendingStatus, noteInput.value);
+  });
+
+  el('.jira', card).addEventListener('click', () => toggleJiraPanel(s.id));
+}
+
+async function submitReview(suggestionId, status, note) {
+  try {
+    await api(`/change-suggestions/${suggestionId}/review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status, reviewer_name: getReviewerName() || null, reviewer_note: note || null }),
+    });
+    showToast(`Marked ${status.replace('_',' ')}.`);
+    loadSuggestionsList();
+  } catch (e) {
+    showToast('Could not save review: ' + e.message, true);
+  }
+}
+
+async function toggleJiraPanel(suggestionId) {
+  const panel = el(`#jira-${suggestionId}`);
+  const isOpen = panel.classList.contains('open');
+  if (isOpen) { panel.classList.remove('open'); return; }
+
+  panel.classList.add('open');
+  panel.innerHTML = `<p class="mono" style="color:var(--paper-dim)">generating…</p>`;
+  try {
+    const draft = await api(`/change-suggestions/${suggestionId}/jira-ticket`);
+    panel.innerHTML = `
+      <div class="jira-title">${escapeHtml(draft.title)}</div>
+      <textarea class="jira-body" readonly>${escapeHtml(draft.description)}</textarea>
+      <div style="margin-top:10px; display:flex; gap:8px;">
+        <button class="btn copy-title">Copy title</button>
+        <button class="btn copy-body">Copy description</button>
+      </div>
+      <div class="jira-key-row">
+        <input type="text" class="jira-key-input" placeholder="KUV-1234 (after creating in JIRA)">
+        <button class="btn save-jira-key">Save ticket key</button>
+      </div>`;
+
+    el('.copy-title', panel).addEventListener('click', () => {
+      navigator.clipboard.writeText(draft.title);
+      showToast('Title copied.');
+    });
+    el('.copy-body', panel).addEventListener('click', () => {
+      navigator.clipboard.writeText(draft.description);
+      showToast('Description copied.');
+    });
+    el('.save-jira-key', panel).addEventListener('click', async () => {
+      const key = el('.jira-key-input', panel).value.trim();
+      if (!key) { showToast('Enter a ticket key first.', true); return; }
+      try {
+        await api(`/change-suggestions/${suggestionId}/jira-key`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jira_ticket_key: key }),
+        });
+        showToast('Ticket key saved.');
+        loadSuggestionsList();
+      } catch (e) {
+        showToast('Could not save: ' + e.message, true);
+      }
+    });
+  } catch (e) {
+    panel.innerHTML = `<p class="mono" style="color:var(--oxblood)">Couldn't generate draft: ${escapeHtml(e.message)}</p>`;
+  }
+}
+
 /* ---------------- Tabs ---------------- */
 els('nav.tabs button').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -755,7 +1103,9 @@ els('nav.tabs button').forEach(btn => {
     const tab = btn.dataset.tab;
     el('#view-queue').style.display = tab === 'queue' ? '' : 'none';
     el('#view-docs').style.display = tab === 'docs' ? '' : 'none';
+    el('#view-suggestions').style.display = tab === 'suggestions' ? '' : 'none';
     if (tab === 'docs') renderDocs();
+    if (tab === 'suggestions') renderSuggestions();
   });
 });
 

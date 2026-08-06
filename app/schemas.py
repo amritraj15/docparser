@@ -76,3 +76,54 @@ class ExtractionField(BaseModel):
     value: Optional[Any] = None
     confidence: float
     source_note: Optional[str] = None
+
+
+class CandidateOut(BaseModel):
+    path: str
+    start_line: int
+    end_line: int
+    file_tag: str
+    score: float
+    snippet: str
+
+
+class ChangeSuggestionOut(BaseModel):
+    id: str
+    document_id: str
+    target: str
+    matched: bool
+    reason: Optional[str]
+    candidates: List[dict] = []
+    status: str
+    reviewer_name: Optional[str]
+    reviewer_note: Optional[str]
+    jira_ticket_key: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ChangeSuggestionDetailOut(ChangeSuggestionOut):
+    # Denormalized document context, so a PM dashboard doesn't need a second fetch per row.
+    document_filename: Optional[str] = None
+    circular_number: Optional[str] = None
+    segment: Optional[str] = None
+    impact_area: Optional[str] = None
+    summary: Optional[str] = None
+
+
+class ChangeSuggestionReview(BaseModel):
+    status: str  # "approved" | "needs_discussion" | "rejected" | "pending"
+    reviewer_name: Optional[str] = None
+    reviewer_note: Optional[str] = None
+
+
+class JiraTicketDraft(BaseModel):
+    title: str
+    description: str  # markdown - copy/paste into JIRA, not a live API create (see decisions.md #22)
+
+
+class JiraTicketKeySave(BaseModel):
+    jira_ticket_key: str  # e.g. "KUV-1234", recorded after manual creation for traceability

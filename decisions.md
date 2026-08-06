@@ -734,6 +734,191 @@ plainly rather than presenting `openrouter/free` as a solved problem. A pinned p
 (`anthropic/claude-sonnet-4.6`, already confirmed working) is documented as the fallback
 the moment free-tier reliability stops being good enough.
 
+**Addendum 4 — upgraded from the generic auto-router to a specific, evidenced free model
+for testing:** asked directly which free model to use "now, for testing" — a genuinely
+different question than addendum 3's "give me a resilient always-works default," and worth
+a better answer than the auto-router's unpredictability. Rather than guess a specific
+`:free` slug again the way addendum 2 did (and got wrong), fetched OpenRouter's own **"Top
+Tool Calling Models"** collection page directly (`openrouter.ai/collections/tool-calling-
+models`) — a usage-ranked list maintained by OpenRouter itself, not a third-party tracker.
+`tencent/hy3:free` came out of that page specifically described as having *"stable
+tool-calling that generalizes across agent scaffoldings"* and ranking #1 by usage among the
+free models on that list (11.9T tokens) — meaningfully stronger evidence than the earlier
+addenda had for anything. Switched the default to it for local testing, while being
+explicit about the one thing that's still not verified: nobody has run this project's exact
+request shape (PDF as an OpenAI-style file block + forced `tool_choice`) against this
+specific model. "OpenRouter says it does tool calling well" and "it handles this project's
+specific forced-schema PDF extraction correctly" are still two different claims — the same
+lesson addendum 2 already paid for, applied again rather than forgotten. `openrouter/free`
+and the pinned paid model both remain documented as fallbacks in both the README and
+`.env.example`.
+
+**Addendum 5 — a real call succeeded, and it wasn't with the model addendum 4 picked:**
+the deployed instance's first successful real-world classification (a genuine BSE circular,
+`20260722-30.pdf`) went through OpenRouter via `nvidia/nemotron-3-ultra-550b-a55b:free` —
+not `tencent/hy3:free`, which was still only documentation-evidenced, never actually
+exercised. This is categorically stronger proof than anything in addenda 1–4: not "a
+usage-ranked OpenRouter collection page says this model is good at tool calling," but an
+actual request through this pipeline's exact shape (PDF file-block, forced `tool_choice`,
+this JSON schema) that worked correctly end-to-end. The result itself is worth recording
+because it validated the confidence-gating design under real conditions, not just tests:
+`circular_number`/`circular_date` came back at 99% confidence and correct, while
+`effective_date` correctly landed at 30% with a reasoned explanation — *"Not explicitly
+stated in this notice; refers to 'prescribed implementation date' from SEBI circular
+referenced in earlier notice 20260716-27"* — rather than a guessed date. That's the exact
+behavior decisions #4 and #10 were designed around, now confirmed happening in production,
+on a free model, not just in a mocked test. Promoted `nvidia/nemotron-3-ultra-550b-a55b:free`
+to the default ahead of `tencent/hy3:free` on that basis — verified-by-a-real-call beats
+evidenced-but-untested, consistent with the standard addendum 2 already established the
+hard way. `tencent/hy3:free` stays as the first fallback, since it's still the
+best-evidenced *un*verified option if this one gets delisted.
+
+---
+
+## 22. PM/lead review workflow for change-suggestions, ending in a JIRA ticket draft
+
+**Decision:** Persist repo-suggestion results as `ChangeSuggestion` rows (one per
+document+target) instead of the purely ephemeral response `/documents/{id}/suggest-changes`
+returned before, add a dedicated review workflow (approve/needs-discussion/reject, with a
+reviewer name and note), and a JIRA ticket **draft generator** — not a live JIRA API
+integration.
+
+**Why this needed to be persisted at all:** the original `suggest-changes` endpoint
+computed a result and returned it once — useful for testing the retrieval logic (which is
+what it was built for), useless for the actual stated goal of "PMs review this with a lead,
+then create JIRA tasks." A PM and a lead looking at the same suggestion together, on a call
+or async, need something that's still there when they come back to it, with a recorded
+outcome — not a response object that vanished the moment the HTTP request completed.
+
+**The one non-obvious design decision: re-running `suggest-changes` does not clobber a
+recorded review.** If a suggestion is still `pending`, re-running refreshes it (the repo
+may have been re-indexed since). Once a PM/lead has moved it to `approved`/
+`needs_discussion`/`rejected`, re-running returns the existing row unchanged. Without this,
+someone re-triggering the search (e.g. to check if a re-index changed anything) would
+silently erase a real review decision — verified directly in testing
+(`test_rerunning_suggest_changes_does_not_overwrite_a_recorded_review`), not just asserted
+in the code comment.
+
+**Why a JIRA *draft*, not a live JIRA API integration:** building against a real JIRA API
+would need actual JIRA credentials (site URL, API token, project key) this project has
+never had access to. Shipping that untested is precisely the mistake this project already
+made once — addendum 2's `anthropic/claude-sonnet-latest`, which looked correct from
+documentation and failed on the first real call. A generated Markdown draft (title +
+description, with the source circular's context, the reasoning behind the classification,
+suggested code locations, and any reviewer note) that a PM copies into JIRA directly is
+something that can actually be built and verified end-to-end without external credentials —
+and it's still real, concrete progress toward the stated goal, not a placeholder. A
+`jira_ticket_key` field exists to record the real ticket number after manual creation, so
+the review stays traceable back to the actual tracked work even without API access.
+
+**No auth on this either** — same inherited, accepted-for-demo gap as the rest of the app
+(decisions.md #13). `reviewer_name` is free text, not a real identity, because there's no
+user system to draw from; this is honest about being a lightweight collaboration aid, not
+an audit-grade approval chain.
+
+**Verified, not just written:** full live-server test — build a real local index (mocked
+embedding), upload and classify a document, generate a suggestion, confirm it appears on
+the dashboard listing with denormalized circular context, approve it with a reviewer name
+and note, generate a JIRA draft and confirm it contains the right circular number/segment/
+candidate file/effective-date/reviewer-note, save a real ticket key, and confirm re-running
+suggest-changes preserves the approved status rather than resetting it. 10 new tests
+(`test_change_suggestions.py`, plus 2 existing repo-suggestion tests updated for the new
+persisted-list response shape), 69 total, all green.
+
+**What was cut:** No email/Slack notification when a suggestion needs review (same gap
+already logged for the classification review queue — see "Newly Discovered Work" in
+`03-todo.md`). No pagination on the dashboard listing (fine at demo volume). No real JIRA
+API integration, as covered above — the honest next step if this project gets real JIRA
+credentials to build and test against.
+
+---
+
+## 23. Fix: Ollama embedding endpoint was deprecated out from under this project
+
+**What happened:** the first real local test of the repo-suggestion feature failed with
+`404 Not Found` on `POST /api/embeddings` — Ollama's own current docs confirm this endpoint
+"has been superseded by `/api/embed`" and 404s outright on current Ollama versions, not a
+local misconfiguration. This project was built against `/api/embeddings` (the legacy
+endpoint, `prompt` in / `embedding` out) months before this fix; Ollama moved on.
+
+**Fix:** switched to `/api/embed` (`input` in — accepts a batch array — / `embeddings`
+plural out). This isn't just a URL change: the request and response shapes both differ,
+so `_embed_texts()` was rewritten, not patched. Took the opportunity to fix a real
+inefficiency at the same time — the old code sent one HTTP request per chunk in a Python
+loop; `/api/embed` genuinely supports batching, so indexing now sends `_EMBED_BATCH_SIZE`
+(64) chunks per request instead of one request per chunk, which matters once a real repo
+has hundreds of chunks to embed.
+
+**Verified, not just changed:** confirmed the deprecation directly against Ollama's own
+docs (`docs.ollama.com/capabilities/embeddings`) before writing any code — the same
+discipline that already caught the OpenRouter model-alias mistake (decisions.md #20,
+addendum 2), applied here before a second guess-and-fail cycle. Four tests added/updated
+in `test_repo_index.py`: the new endpoint and payload shape (`input`, not `prompt`;
+`/api/embed`, not `/api/embeddings`), real batching across multiple requests when input
+exceeds the batch size, and an empty-input short-circuit that skips the HTTP call
+entirely. 72 tests total, all green.
+
+**What this is a good example of, again:** this is the third time this session a
+dependency or external API moved on since it was originally wired up (pydantic-core/Python
+3.14 in decisions.md #15, the OpenRouter model alias in #20 addendum 2, now this) — none of
+which showed up in the test suite, because tests mock these boundaries by design. Real
+external calls are the only thing that actually proves a boundary still works; that's
+exactly what a first real local test run is for, and exactly why one was worth running
+before calling this feature done rather than only demo-ready.
+
+---
+
+## 24. Fix: a field the model omits entirely must not look like a clean classification
+
+**What happened:** a real classification via `gemma4:latest` (Ollama) returned only
+`system_impacting` correctly; every other scalar field (`segment`, `circular_number`,
+`impact_area`, `circular_date`, `summary`, `effective_date`) was completely absent from
+the response, and `key_points` contained self-invented, dict-like text
+(`"{'backend_change': True, 'frontend_change': True, 'segment': 'Mutual Fund'}"`) instead
+of the plain-English sentences the schema asks for. `_normalize()`'s existing behavior for
+a missing field was to silently `continue` — no field row, no confidence signal, nothing.
+The document landed in `status: complete` with zero visible red flags, and the Change
+Suggestions feature failed silently downstream (`impact_area` was empty, so
+`suggest-changes` 400'd) with no way to tell from the UI *why*.
+
+**The actual bug, stated precisely:** this project's whole design is built around "a
+low-confidence field routes to review instead of being silently trusted" — but that
+machinery only ever fires for a field the model explicitly returned with low confidence.
+A field the model didn't return *at all* was invisible to it entirely. Confidence-gating
+a value the model chose not to produce is not the same problem as confidence-gating a
+value it produced but wasn't sure about, and the code only handled the second case.
+
+**Fix, two layers:**
+1. `SYSTEM_PROMPT` now explicitly instructs the model to include every schema field even
+   when unsure (null value, low confidence) rather than omitting it, and explicitly
+   forbids dict/JSON-like text as a `key_point` value — matching the discipline the
+   original invoice-extraction prompt had that got lost in the pivot to circulars
+   (decisions.md #10).
+2. `_normalize()` no longer skips a missing scalar field — it now creates a field row with
+   `value=None, confidence=0.0, source_note="Field was not present in the model's
+   response."`, which routes it into the review queue via the exact same threshold
+   mechanism as an explicit low-confidence answer. A prompt instruction alone isn't
+   reliable enough to depend on — this is exactly the model that just proved it — so the
+   code-level fix is the one actually load-bearing here; the prompt fix is a second line
+   of defense, not the primary one.
+
+**Verified against the real incident, not a synthetic approximation of it:** reproduced
+the exact payload shape from the actual `gemma4` response through the real `_normalize()`
+(not a hand-built mock that bypasses it) in a live server run — confirmed the document now
+lands in `needs_review` with all seven missing fields flagged and visible in
+`/review/queue`, while `system_impacting` (the one field genuinely returned) stays
+untouched at its real value and confidence. Two new tests in `test_extraction.py` cover
+the same behavior at the unit level, including one built directly from this incident's
+payload shape. 73 tests total, all green.
+
+**What this changes about interpreting `gemma4:latest` for this pipeline:** this is now
+a *confirmed*, not merely suspected, finding — `gemma4` did not reliably follow this
+project's forced-schema structured-output contract on a real call, independent of whether
+the earlier-flagged context-window truncation was the cause. Worth retesting after
+confirming `num_ctx` is set appropriately (see the model's own conversation thread on this
+project), but until then, `nvidia/nemotron-3-ultra-550b-a55b:free` via OpenRouter remains
+the only classification path with a confirmed-clean real result end to end.
+
 ---
 
 ## 21. Local Supabase as an optional local-dev database — no code change required

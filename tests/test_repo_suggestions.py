@@ -103,8 +103,11 @@ def test_suggest_changes_end_to_end(client, sample_pdf_bytes, monkeypatch, tmp_p
     resp = client.post(f"/documents/{doc_id}/suggest-changes")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["results"]["backend"]["matched"] is True
-    assert body["results"]["backend"]["candidates"][0]["path"] == "app/order_schema.py"
+    assert len(body) == 1
+    assert body[0]["target"] == "backend"
+    assert body[0]["matched"] is True
+    assert body[0]["candidates"][0]["path"] == "app/order_schema.py"
+    assert body[0]["status"] == "pending"  # awaiting PM/lead review
 
 
 def test_suggest_changes_no_index_built_reports_reason_not_500(client, sample_pdf_bytes, monkeypatch, tmp_path):
@@ -120,5 +123,6 @@ def test_suggest_changes_no_index_built_reports_reason_not_500(client, sample_pd
 
     resp = client.post(f"/documents/{doc_id}/suggest-changes")
     assert resp.status_code == 200
-    assert resp.json()["results"]["backend"]["matched"] is False
-    assert "No index built" in resp.json()["results"]["backend"]["reason"]
+    body = resp.json()
+    assert body[0]["matched"] is False
+    assert "No index built" in body[0]["reason"]
