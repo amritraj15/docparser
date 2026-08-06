@@ -773,6 +773,25 @@ evidenced-but-untested, consistent with the standard addendum 2 already establis
 hard way. `tencent/hy3:free` stays as the first fallback, since it's still the
 best-evidenced *un*verified option if this one gets delisted.
 
+**Addendum 5 correction — the proof above was real but narrower than it was written:**
+the framing above says "worked correctly end-to-end," which was true for the fields it
+checked — but a second real run of the **same model against the same document** (after
+decision #24's missing-field fix landed) surfaced a reproducible gap: `circular_number`,
+`circular_date`, `effective_date`, `summary`, and all `key_points` came back excellent
+again, but `system_impacting`, `impact_area`, `segment`, and `subject` were *entirely
+absent* from the response both times — not low-confidence, just missing. Free-text
+generation from this model is genuinely good against this pipeline; the boolean/enum
+classification fields specifically are not proven, and the second run makes this look like
+a real pattern rather than noise. This is exactly the distinction decision #24 built
+machinery to catch — before that fix, this gap was invisible (silent `status: complete`);
+after it, the same gap is now visible and routes to review every time, which is a strictly
+better place to be even though the underlying model behavior isn't fixed. Not yet
+diagnosed: whether this is a genuine `nemotron` limitation with boolean/enum
+tool-call arguments specifically, or an artifact of how OpenRouter translates a forced
+Anthropic-shaped tool schema into the OpenAI function-calling format for this model. Worth
+testing against a second document before concluding either way — one reproduction on one
+document is a pattern worth flagging, not yet a fully isolated root cause.
+
 ---
 
 ## 22. PM/lead review workflow for change-suggestions, ending in a JIRA ticket draft
