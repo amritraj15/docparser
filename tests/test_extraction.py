@@ -143,3 +143,21 @@ def test_malformed_field_shape_raises_extraction_error_not_unhandled_exception(m
 
     with pytest.raises(ExtractionError, match="malformed structured output"):
         _safe_normalize(malformed_payload)
+
+
+def test_schema_requires_all_product_critical_fields():
+    """
+    Contract test for a real incident: the schema's top-level `required` list originally
+    only listed doc_type/doc_type_confidence, so a schema-VALID tool call could omit
+    system_impacting/impact_area/segment entirely — which happened twice on real requests
+    (decisions.md #20 addendum 5 correction). The system prompt already instructed the
+    model to never omit a field, but the schema itself never enforced it — this test
+    guards against that gap reopening silently in a future edit.
+    """
+    from app.services.extraction import EXTRACTION_SCHEMA
+
+    required = set(EXTRACTION_SCHEMA["required"])
+    for field in ["doc_type", "doc_type_confidence", "circular_number", "circular_date",
+                  "subject", "segment", "system_impacting", "impact_area",
+                  "effective_date", "summary", "key_points"]:
+        assert field in required, f"'{field}' must be schema-required, not just prompt-requested"

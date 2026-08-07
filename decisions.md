@@ -940,6 +940,54 @@ the only classification path with a confirmed-clean real result end to end.
 
 ---
 
+## 25. Root cause of the missing-classification-field pattern: the schema itself allowed it
+
+**What was investigated:** decision #20's addendum 5 correction left an open question —
+was the reproducible gap (`system_impacting`/`impact_area`/`segment`/`subject` missing
+while free-text fields were consistently excellent, on two separate real runs of
+`nemotron`) a genuine model limitation, or something in this project's own control? Rather
+than guess at model internals with no way to test them, the actual schema sent to the
+model was re-read line by line.
+
+**Root cause, found in the code, not the model:** `EXTRACTION_TOOL["input_schema"]`'s
+top-level `required` array only ever listed `["doc_type", "doc_type_confidence"]`. Every
+other field — including `system_impacting` and `impact_area`, the two fields this entire
+product exists to produce — was schema-*optional*. A tool call omitting them entirely was
+100% schema-valid. Decision #24's system-prompt fix already told the model *"every field
+must be present, even when unsure"* — but the schema constraint the model was actually
+generating against never enforced that instruction, so prompt intent and schema contract
+had drifted out of sync. That inconsistency, not a model-specific weakness, is the more
+likely explanation for a pattern that reproduced across two different models
+(`gemma4` and `nemotron`) rather than looking model-specific.
+
+**Fix:** added every scalar and array field to the top-level `required` list, so the
+schema now matches what the prompt already asks for.
+
+**What this fix does and does not guarantee, stated precisely rather than oversold:**
+`required` in a JSON schema is a strong signal most function-calling-trained models weight
+heavily, but on Anthropic's and OpenRouter's standard tool-calling paths it is not enforced
+by constrained decoding — nothing server-side blocks a model from still generating a
+non-compliant call. This is a real improvement to the odds, not a hard guarantee. A
+stronger fix exists — OpenAI-style structured outputs (`strict: true`), which *does* use
+constrained decoding to make schema violations structurally impossible — but it wasn't
+applied here: it requires every nested field schema to make `value`/`source_note`
+required-but-nullable instead of optional (a real restructure, not a flag flip),
+`additionalProperties: false` throughout, and its support varies across OpenRouter's
+backend models in ways that can't be verified without a real key to test each one against.
+Shipping that blind would repeat the exact mistake decision #20's addendum 2 already made
+once — a fix that looks right until a real call proves otherwise. The safe, verified
+`required`-list fix ships now; `strict` mode is logged here as the deliberate next step,
+not silently skipped.
+
+**Not yet verified:** this fix has not been confirmed against a real `nemotron` call yet —
+no API credits available in this environment to test it. The mechanism is sound and the
+schema/prompt inconsistency is real regardless of outcome, but "the schema now asks
+correctly" and "the model now complies" are still two different claims, in keeping with
+every other lesson this project's OpenRouter work has already paid for. Reprocessing the
+same real document (`20260722-30.pdf`) after pulling this fix is the actual test.
+
+---
+
 ## 21. Local Supabase as an optional local-dev database — no code change required
 
 **Decision:** Document `supabase start` (the Supabase CLI's local Docker stack) as a

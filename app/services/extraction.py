@@ -136,7 +136,11 @@ EXTRACTION_TOOL = {
                 ),
             },
         },
-        "required": ["doc_type", "doc_type_confidence"],
+        "required": [
+            "doc_type", "doc_type_confidence",
+            "circular_number", "circular_date", "subject", "segment",
+            "system_impacting", "impact_area", "effective_date", "summary", "key_points",
+        ],
     },
 }
 
