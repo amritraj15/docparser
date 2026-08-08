@@ -78,17 +78,22 @@ def get_document(document_id: str, db: Session = Depends(get_db)):
 
 @router.post("/{document_id}/reprocess", response_model=DocumentOut)
 def reprocess_document(document_id: str, db: Session = Depends(get_db)):
-    """Re-run extraction, e.g. after a transient LLM API failure marked the doc FAILED."""
+    """
+    Re-run extraction, e.g. after a transient LLM API failure marked the doc FAILED — or,
+    now, as the explicit "reprocess anyway" action when a fresh upload reused a cached
+    result from an identical prior PDF (decisions.md #26) and you want a genuinely fresh
+    classification regardless. Always force=True: never reuses a cached result, even if
+    one would otherwise match.
+    """
     doc = db.get(Document, document_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found.")
 
-    db.query(Document).filter(Document.id == document_id)  # no-op, keeps symmetry with delete-style ops
     for f in list(doc.fields):
         db.delete(f)
     db.commit()
 
-    return process_document(db, document_id)
+    return process_document(db, document_id, force=True)
 
 
 def _field_value(doc: Document, name: str) -> Optional[str]:

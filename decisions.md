@@ -988,6 +988,84 @@ same real document (`20260722-30.pdf`) after pulling this fix is the actual test
 
 ---
 
+## 26. Content-hash-based document dedup: reuse a result, but always allow "reprocess anyway"
+
+**Decision:** Uploading a PDF whose exact bytes have already been processed successfully
+under the exact same provider + model + prompt/schema no longer spends a new LLM call —
+the prior result is copied onto the new document instead. Uploading under *different*
+processing conditions (provider, model, or a changed prompt/schema) always re-processes
+fresh. `POST /documents/{id}/reprocess` always bypasses the cache entirely, so a genuinely
+fresh classification is never more than one click away even when a cached match exists.
+
+**Why this needed a real design, not just an `if` statement:** naive dedup ("same
+filename, don't reprocess") would be wrong in an obvious way — a file gets replaced with
+different content sharing the same name constantly. The actual identity that matters is
+byte-for-byte PDF content, and even that isn't enough on its own: a cached result from a
+different model, or from before a schema/prompt fix, should never silently pass itself off
+as reflecting current behavior. Both had to be true — same content, same conditions — for
+a reuse to be safe.
+
+**How "same conditions" is defined, and why not a manual version number:** provider and
+model are stored directly. Prompt/schema identity is captured via `contract_fingerprint()`
+— a hash of the actual `SYSTEM_PROMPT` and `EXTRACTION_SCHEMA` content, computed fresh
+every time, not a hand-maintained `SCHEMA_VERSION = "v3"` constant a developer has to
+remember to bump. A manual version number is exactly the kind of thing that gets forgotten
+— decision #25, found earlier in this same session, was itself a schema change that would
+have needed exactly that discipline. Hashing the actual content can't go stale by omission.
+
+**Trade-off, stated plainly: this hashes the whole prompt, not just the schema.** A
+comment-only or wording-only prompt edit invalidates every cached result, even ones that
+would still classify identically. That's the conservative choice on purpose — a hash of
+the schema alone would miss a prompt wording change that alters model behavior without
+touching the schema shape, and this project already paid once for trusting a
+plausible-looking-but-untested assumption (decision #20 addendum 2). Over-invalidating
+costs a few avoidable re-runs; under-invalidating risks silently serving a result that no
+longer reflects how the system actually behaves.
+
+**Trade-off: byte-identical match only.** A re-scanned or re-saved copy of the same
+physical circular produces different PDF bytes and won't match, so it reprocesses fresh —
+correct behavior, just not maximally efficient. Catching genuine near-duplicates would mean
+hashing extracted text instead of raw bytes, which is real additional scope (what counts as
+"close enough," fuzzy matching, false-positive risk) and wasn't built here.
+
+**A reused document gets its own independent review lifecycle, deliberately.** Reuse
+copies the source's *original* LLM output, never a human's later corrections to it — and
+the new document gets its own fresh `ReviewItem`s from its own copied confidence scores,
+with no row shared between the two documents. Correcting one document's `impact_area`
+never touches another's, verified directly
+(`test_correcting_a_reused_documents_field_does_not_affect_the_source`,
+`test_reused_low_confidence_fields_get_their_own_review_items`). The alternative —
+literally linking rows, or copying corrections forward — would couple two documents that
+happen to share content but may legitimately need independent human judgment calls.
+
+**UI:** a reused document shows a visible notice ("Reused an existing result — ... no new
+LLM call was made") with a **Reprocess anyway** button, rather than silently reusing with
+no indication anything was skipped — consistent with this project's stance throughout
+that an automated shortcut should always be visible to the human relying on it, not hidden
+for the sake of a cleaner-looking UI.
+
+**Verified, including a real bug the test suite caught:** while wiring this up, four
+existing `test_query.py` tests started failing — not because the feature was broken, but
+because those tests uploaded the *same* fixture PDF bytes multiple times per test to
+represent different logical documents, which the new dedup logic (correctly) started
+treating as genuine cache hits. Fixed by making the test fixture bytes distinct per upload,
+not by weakening the feature — the tests' assumption was the thing that was wrong, once a
+real content-identity feature existed to expose it. 8 new tests for the dedup feature
+itself, covering: cache hit with no second LLM call, different bytes not matching, a
+provider change invalidating the cache, a simulated prompt/schema change invalidating the
+cache, a FAILED prior attempt never being reused as if it succeeded, `/reprocess` always
+bypassing the cache, and the two review-independence tests above. 82 tests total, all
+green, plus a full live-server run confirming the UI notice and reprocess-anyway button
+render and function correctly end to end.
+
+**What was cut:** no near-duplicate detection (byte-hash only, as covered above). No
+admin/bulk view of which documents share a reuse chain — `reused_from_document_id` is
+queryable per-document but there's no dashboard listing "these 4 uploads all trace back to
+the same original classification." A reasonable next step if reuse chains get long enough
+to matter, not built here.
+
+---
+
 ## 21. Local Supabase as an optional local-dev database — no code change required
 
 **Decision:** Document `supabase start` (the Supabase CLI's local Docker stack) as a

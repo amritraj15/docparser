@@ -815,7 +815,7 @@ function docRowHtml(doc) {
       <div class="top">
         <div>
           <div class="filename">${escapeHtml(doc.filename)}</div>
-          <div class="meta"><span class="status-dot ${doc.status}"></span><span class="status-label">${doc.status.replace('_',' ')}</span> · ${doc.doc_type || 'unclassified'} · ${timeAgo(doc.created_at)}</div>
+          <div class="meta"><span class="status-dot ${doc.status}"></span><span class="status-label">${doc.status.replace('_',' ')}</span> · ${doc.doc_type || 'unclassified'} · ${timeAgo(doc.created_at)}${doc.reused_from_document_id ? ' · <span style="color:var(--brass)">reused result</span>' : ''}</div>
         </div>
         ${doc.status === 'failed' ? `<button class="btn retry mono">Retry</button>` : ''}
       </div>
@@ -835,6 +835,13 @@ async function toggleDocDetail(row) {
     const doc = await api('/documents/' + id);
     let html = '';
     if (doc.error_message) html += `<div class="error">${escapeHtml(doc.error_message)}</div>`;
+    if (doc.reused_from_document_id) {
+      html += `<div style="margin-bottom:12px; padding:10px 12px; border:1px solid var(--brass); border-radius:4px; font-size:12px;">
+        <span style="color:var(--brass)">Reused an existing result</span> — an identical PDF was already
+        processed under the same provider/model/prompt, so no new LLM call was made.
+        <button class="btn reprocess-anyway mono" style="margin-top:8px; display:block;">Reprocess anyway →</button>
+      </div>`;
+    }
     if (doc.fields.length === 0) {
       html += `<div class="mono" style="color:var(--paper-dim)">No fields extracted yet.</div>`;
     } else {
@@ -865,6 +872,26 @@ async function toggleDocDetail(row) {
           showToast('Retry failed: ' + e.message, true);
           retryBtn.disabled = false;
           retryBtn.textContent = 'Retry';
+        }
+      });
+    }
+
+    const reprocessAnywayBtn = el('.reprocess-anyway', detail);
+    if (reprocessAnywayBtn) {
+      reprocessAnywayBtn.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        reprocessAnywayBtn.disabled = true;
+        reprocessAnywayBtn.textContent = 'Reprocessing…';
+        try {
+          await api('/documents/' + id + '/reprocess', { method: 'POST' });
+          showToast('Reprocessing with a fresh LLM call — bypassing the cached result.');
+          toggleDocDetail(row); toggleDocDetail(row); // close and reopen to refresh
+          renderDocs();
+          refreshStats();
+        } catch (e) {
+          showToast('Reprocess failed: ' + e.message, true);
+          reprocessAnywayBtn.disabled = false;
+          reprocessAnywayBtn.textContent = 'Reprocess anyway →';
         }
       });
     }

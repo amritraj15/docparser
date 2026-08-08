@@ -25,6 +25,7 @@ class DocumentOut(BaseModel):
     doc_type: Optional[str]
     doc_type_confidence: Optional[float]
     error_message: Optional[str]
+    reused_from_document_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

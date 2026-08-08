@@ -79,6 +79,11 @@ relies on it.
 
 ## Known gotchas
 
+- **Uploading the same PDF twice does not reprocess it by default.** Content-hash + provider
+  + model + prompt/schema fingerprint match → the prior result is reused, no new LLM call.
+  `POST /documents/{id}/reprocess` always bypasses this. If you're testing extraction
+  changes and re-uploading the same sample file expecting a fresh call, use `/reprocess`
+  on the existing document instead of re-uploading — see decisions.md #26.
 - **Background tasks need their own DB session.** `app/routers/documents.py`'s
   `_process_document_isolated` opens a fresh `SessionLocal()` rather than reusing the
   request-scoped session, because FastAPI may close the request session before a

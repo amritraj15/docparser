@@ -50,6 +50,18 @@ class Document(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # Dedup: content_hash identifies the exact PDF; the other three identify the exact
+    # processing conditions that produced this document's fields. A future upload only
+    # reuses this document's results if ALL FOUR match — see decisions.md #26.
+    content_hash = Column(String, nullable=True, index=True)       # sha256 of the raw PDF bytes
+    extraction_provider = Column(String, nullable=True)             # "anthropic" | "ollama" | "openrouter"
+    extraction_model = Column(String, nullable=True)                # the specific model string used
+    extraction_contract_fingerprint = Column(String, nullable=True)  # hash of prompt+schema at run time
+    reused_from_document_id = Column(String, ForeignKey("documents.id"), nullable=True)  # set if this
+                                                                       # document's fields were copied
+                                                                       # from a prior identical run,
+                                                                       # not freshly extracted
+
     fields = relationship("ExtractedField", back_populates="document", cascade="all, delete-orphan")
 
 

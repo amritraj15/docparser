@@ -24,9 +24,13 @@ def _upload(client, sample_pdf_bytes, monkeypatch, segment, system_impacting, im
         "app.services.pipeline.extract_document",
         lambda p: _result(segment, system_impacting, impact_area, effective_date, subject),
     )
+    # Distinct bytes per call - these represent different logical documents in the test,
+    # and content-hash dedup (decisions.md #26) would otherwise reuse the first upload's
+    # result for every subsequent one, since sample_pdf_bytes is identical across calls.
+    unique_bytes = sample_pdf_bytes + f"\n% test-marker: {subject}".encode()
     resp = client.post(
         "/documents",
-        files={"file": (f"{subject}.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")},
+        files={"file": (f"{subject}.pdf", io.BytesIO(unique_bytes), "application/pdf")},
     )
     return resp.json()["id"]
 

@@ -169,6 +169,36 @@ SYSTEM_PROMPT = (
 )
 
 
+def contract_fingerprint() -> str:
+    """
+    A short hash of the exact prompt + schema currently in effect. Used to invalidate a
+    cached/reused classification result whenever extraction logic changes — including a
+    wording-only prompt edit, not just a schema change. Deliberately conservative (over-
+    invalidates rather than under-invalidates): a hash of the schema alone would miss a
+    prompt change that alters model behavior without touching the schema shape, and this
+    project already paid for the cost of a plausible-looking-but-wrong assumption once
+    (decisions.md #20 addendum 2). No manual version constant to remember to bump — this
+    can't go stale by omission the way a hand-maintained "SCHEMA_VERSION" string could.
+    """
+    import hashlib
+    payload = SYSTEM_PROMPT + json.dumps(EXTRACTION_SCHEMA, sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def current_model_identifier() -> str:
+    """The specific model string actually in effect for the configured provider — part of
+    the dedup fingerprint alongside contract_fingerprint(), so a provider or model switch
+    invalidates a cached result even when the prompt/schema haven't changed."""
+    provider = settings.llm_provider.lower()
+    if provider == "anthropic":
+        return settings.extraction_model
+    if provider == "ollama":
+        return settings.ollama_model
+    if provider == "openrouter":
+        return settings.openrouter_model
+    return "unknown"
+
+
 @dataclass
 class ExtractedFieldResult:
     field_name: str

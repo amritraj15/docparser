@@ -202,6 +202,17 @@ free tier — this is exactly what avoids the "history disappears" problem from 
 just for local dev rather than the deployed instance). Run `supabase db reset` if you
 deliberately want a clean slate.
 
+### Re-uploading the same PDF
+
+Uploading a file whose exact bytes were already processed successfully — under the same
+provider, model, and prompt/schema — reuses that result instead of spending a new LLM
+call. The document detail view shows a **"Reused an existing result"** notice with a
+**Reprocess anyway** button when this happens; `POST /documents/{id}/reprocess` always
+forces a genuinely fresh classification regardless of any cached match. Uploading under
+different conditions (switched provider/model, or a changed prompt/schema after a code
+update) always reprocesses fresh automatically — no manual cache-busting needed. See
+`decisions.md` #26 for the full design and trade-offs.
+
 ### Run the tests
 
 ```bash
